@@ -52,6 +52,26 @@ check(objectSimilarity('北京（2026年10月刚搬过去）', '北京') === 1, 
 check(objectSimilarity('咖啡', '爬山') === 0, 'unrelated objects score zero');
 check(objectSimilarity('咖啡', '美式咖啡') >= 0.45, 'a longer version of the same object is near');
 
+console.log('rephrasings of one statement');
+// Character Dice is scale-sensitive: restatements of one plan score 0.31-0.69,
+// and the update band starts at 0.45, so a third of them fell through and were
+// stored again. Content-token overlap separates them cleanly: restatements share
+// five or more tokens with 0.5+ containment, unrelated plans share at most one.
+const storedPlan = { id: 'f9', predicate: 'plan', object: '猫绘本稿已于今天交稿，出版社下周给反馈' };
+check(decide([storedPlan], { subject: 'user', predicate: 'plan', object: '绘本稿已交，出版社下周给反馈' }).action === 'update',
+  'the same news reworded is the same fact');
+check(decide([storedPlan], { subject: 'user', predicate: 'plan', object: '等出版社下周给稿子的反馈' }).action === 'update',
+  'the same news from another angle is the same fact');
+check(decide([storedPlan], { subject: 'user', predicate: 'plan', object: '下周三（10月21日）去医院复查，复查完打算休息两天' }).action === 'add',
+  'a different plan is a new fact');
+check(decide([storedPlan], { subject: 'user', predicate: 'plan', object: '最近在考虑换工作，还没想好' }).action === 'add',
+  'another different plan is still a new fact');
+// One shared token is a coincidence: "想养猫" appears in both, and merging them
+// would lose the constraint that actually matters (the landlord says no).
+check(decide([{ id: 'f10', predicate: 'goal', object: '一直想养只猫' }],
+  { subject: 'user', predicate: 'goal', object: '想养猫，但现在租的房子房东不让养' }).action !== 'invalidate',
+  'one shared token is not a restatement');
+
 console.log('');
 if (failures === 0) console.log('all checks passed');
 else {
