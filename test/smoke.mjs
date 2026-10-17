@@ -87,11 +87,28 @@ check(liveFacts(db, { subject: owner }).length === 1, 'invalidate drops from liv
 check(db.prepare('SELECT COUNT(*) AS n FROM facts').get().n === 2, 'invalidated fact still stored');
 
 console.log('clarifications');
-const f3 = addFact(db, { subject: owner, predicate: 'lives_in', object: '上海', confidence: 0.5, needsClarification: true });
+const f3 = addFact(db, { subject: owner, predicate: 'blood_type', object: 'A', confidence: 0.5, needsClarification: true });
 check(pendingClarifications(db).length === 1, 'one pending clarification');
-resolveClarification(db, f3, true);
+resolveClarification(db, f3, 'keep_new');
 check(pendingClarifications(db).length === 0, 'clarification resolved');
-check(Number(liveFacts(db, { subject: owner }).find((f) => String(f.id) === f3)?.confidence) > 0.5, 'keeping raised confidence');
+check(Number(liveFacts(db, { subject: owner }).find((f) => String(f.id) === f3)?.confidence) > 0.5, 'keep_new raises confidence');
+
+// keep_old must revive the retired side rather than re-inserting a copy: the
+// old row carries the evidence and review history that made it worth keeping.
+const fOld = addFact(db, { subject: owner, predicate: 'dietary', object: '素食', confidence: 0.7 });
+const fNew = addFact(db, { subject: owner, predicate: 'dietary', object: '杂食', confidence: 0.6, needsClarification: true });
+invalidateFact(db, fOld, { supersededBy: fNew });
+check(liveFacts(db, { subject: owner }).filter((f) => String(f.predicate) === 'dietary').length === 1, 'one live dietary fact before resolve');
+const revived = resolveClarification(db, fNew, 'keep_old');
+check(revived.revivedId === fOld, 'keep_old revives the older row');
+const liveDiet = liveFacts(db, { subject: owner }).filter((f) => String(f.predicate) === 'dietary');
+check(liveDiet.length === 1 && String(liveDiet[0].object) === '素食', 'keep_old restores the older value');
+check(pendingClarifications(db).length === 0, 'keep_old clears the flag');
+
+// both_wrong must leave the attribute empty rather than keeping a guess.
+const fBoth = addFact(db, { subject: owner, predicate: 'mbti', object: 'INTJ', confidence: 0.5, needsClarification: true });
+resolveClarification(db, fBoth, 'both_wrong');
+check(liveFacts(db, { subject: owner }).filter((f) => String(f.predicate) === 'mbti').length === 0, 'both_wrong retires every side');
 
 console.log('fsrs');
 const st = initialStability(3);

@@ -35,3 +35,9 @@ test/*.db
 test/*.db-shm
 test/*.db-wal
 test/real-consolidate.mjs
+# One-off inspection scripts kept for debugging a live database.
+test/diagnose-evidence.mjs
+test/force-consolidate.mjs
+test/inspect-affect.mjs
+test/inspect-db.mjs
+test/show-prompt.mjs
