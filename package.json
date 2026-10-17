@@ -14,7 +14,7 @@
     "README.md",
     "LICENSE"
   ],
-  "license": "BSD-3-Clause",
+  "license": "MIT",
   "keywords": [
     "dsh",
     "dsh-plugin",
