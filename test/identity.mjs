@@ -11,6 +11,7 @@
  *     linked, but never rendered — every read filtered on the owner's subject.
  */
 
+import { readFileSync } from 'node:fs';
 import { openDatabase } from '../lib/db.js';
 import { applyFacts } from '../lib/consolidate.js';
 import { addFact, liveFacts, reinforceFact, recall } from '../lib/store.js';
@@ -51,6 +52,23 @@ console.log('the owner is recognised under their own name');
   check(stray.length === 0, 'no facts are left filed under the bare name');
   const owned = liveFacts(db, { subject: 'user', limit: 20 });
   check(owned.some((fact) => String(fact.object) === '想养猫'), 'the fact landed on the owner');
+}
+
+console.log('both write paths agree about subjects');
+{
+  // The two write paths had drifted: extraction resolved "林晚" to the owner and
+  // `memory_remember` did not, so a plan the model wrote by hand was filed under
+  // the person's own name and then rendered as somebody else's. A behavioural
+  // test cannot reach `memory_remember` (it needs a live tool context), so this
+  // asserts on the wiring instead. It is the kind of check that reads badly and
+  // catches a real class of bug: a write path that forgot the normalisation
+  // passes every other test in this file.
+  const source = readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8');
+  const start = source.indexOf("name: 'memory_remember'");
+  const end = source.indexOf("name: 'memory_forget'");
+  const body = source.slice(start, end === -1 ? undefined : end);
+  check(body.includes('resolveSubject('), 'memory_remember normalises the subject');
+  check(body.includes('ownerAliases('), 'it resolves against the owner\'s stored names');
 }
 
 console.log('other people reach the resident profile');

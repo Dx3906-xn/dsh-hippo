@@ -22,6 +22,7 @@ import {
   closeOpenLoop,
   openLoops,
   addFact,
+  setLoopDue,
 } from '../lib/store.js';
 import {
   detectLoop,
@@ -171,9 +172,88 @@ check('the newer value survives expiry', () => {
   assert.equal(row.invalid_at, null);
 });
 
+// ---- a loop that named a date ------------------------------------------
+
+// The words in a loop are quotable but they expire: a date phrase like "下周三"
+// is false a week later. The stored instant is what still resolves, so the agenda
+// restates it rather than repeating the phrase back.
+const DAY = 24 * 60 * 60 * 1000;
+addOpenLoop(db, {
+  userId: 'user',
+  text: '要去医院复查，有点紧张',
+  followAfter: Date.now() - 1000,
+  dueAt: Date.now() + 2 * DAY,
+  duePhrase: '下周三',
+});
+addOpenLoop(db, {
+  userId: 'user',
+  text: '最近在戒烟',
+  followAfter: Date.now() - 1000,
+});
+
+check('a dated loop restates the date instead of the stale phrase', () => {
+  const text = renderAgenda(db, { now: Date.now() });
+  assert.ok(text.includes('要去医院复查'), 'expected the loop');
+  assert.ok(text.includes('指的是'), 'expected the resolved date to be restated');
+});
+
+check('a loop that still names its own day is not padded', () => {
+  // "明天交稿（指的是明天）" says the same thing twice. The parenthetical has to be
+  // reserved for loops whose words no longer resolve, or the model learns to skim
+  // all of them.
+  addOpenLoop(db, {
+    userId: 'user',
+    text: '明天要交稿了',
+    followAfter: Date.now() - 1000,
+    dueAt: Date.now() + DAY,
+    duePhrase: '明天',
+  });
+  const text = renderAgenda(db, { now: Date.now() });
+  const line = text.split('\n').find((row) => row.includes('明天要交稿了')) ?? '';
+  assert.ok(line !== '', 'expected the loop');
+  assert.equal(line.includes('指的是'), false, 'no restated date on a self-explanatory line');
+});
+
+check('an undated loop keeps the plain form', () => {
+  const text = renderAgenda(db, { now: Date.now() });
+  assert.ok(/最近在戒烟（[^）]*说过/.test(text), `expected the plain form, got: ${text}`);
+});
+
+check('a loop stored before dates were parsed still renders', () => {
+  // `due_at` is null on every row written before schema 12. Those must not lose
+  // their line, or upgrading the plugin would silently empty the agenda.
+  const row = db.prepare('SELECT id FROM open_loops WHERE text = ?').get('最近在戒烟');
+  const stored = db.prepare('SELECT due_at FROM open_loops WHERE id = ?').get(String(row.id));
+  assert.equal(stored.due_at, null);
+  assert.ok(renderAgenda(db, { now: Date.now() }).includes('最近在戒烟'));
+});
+
 check('agenda text never contains a bare mustache', () => {
   const text = renderAgenda(db, { now: Date.now() });
   assert.equal(text.includes('{{'), false);
+});
+
+console.log('filling a date into a loop that already existed');
+check('an undated loop can acquire a date later', () => {
+  // Loops are deduplicated by surface overlap, so the second mention of a worry
+  // keeps the first row. Rows written before dates were parsed have no instant,
+  // and dropping the duplicate used to discard the only copy that resolved.
+  const id = addOpenLoop(db, { userId: 'user', text: '下个月要搬去杭州', followAfter: Date.now() + 1000 });
+  const changed = setLoopDue(db, id, { dueAt: Date.now() + 20 * DAY, duePhrase: '下个月', followAfter: Date.now() + 20 * DAY });
+  assert.equal(changed, true);
+  const row = db.prepare('SELECT due_at, due_phrase FROM open_loops WHERE id = ?').get(id);
+  assert.notEqual(row.due_at, null);
+  assert.equal(row.due_phrase, '下个月');
+});
+
+check('a resolved date is never moved by a later mention', () => {
+  // "下个月搬去杭州" said twice is one move. Re-resolving the second mention would
+  // push the date forward every time the person brought it up.
+  const row = db.prepare("SELECT id, due_at FROM open_loops WHERE text = '下个月要搬去杭州'").get();
+  const changed = setLoopDue(db, String(row.id), { dueAt: Date.now(), duePhrase: '今天', followAfter: Date.now() });
+  assert.equal(changed, false);
+  const after = db.prepare('SELECT due_at FROM open_loops WHERE id = ?').get(String(row.id));
+  assert.equal(after.due_at, row.due_at);
 });
 
 db.close();
