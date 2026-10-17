@@ -1,0 +1,7 @@
+# dsh-hippo bundle patch
+#
+# 单行插件挂载：DSH 的 bundle 层只要一个 insert 就能把整个插件装进来。
+# 需要配置时（比如换 dbPath、开关抽取），把 config 写在这里。
+- insert:
+    - id: hippo
+      name: dsh-hippo
