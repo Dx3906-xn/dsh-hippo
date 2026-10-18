@@ -55,6 +55,7 @@ const handlers = new Map();
 const disposers = [];
 let settled = null;
 
+const commands = [];
 const ctx = {
   llm,
   systemPrompt: {
@@ -69,6 +70,16 @@ const ctx = {
     register(tool) {
       tools.push(tool);
     },
+  },
+  // Cordis installs a service as a method on the context; `ctx.get` is how a
+  // plugin asks whether one exists without declaring an `inject` dependency.
+  get(name) {
+    if (name !== 'commands') return undefined;
+    return {
+      register(definition) {
+        commands.push(definition);
+      },
+    };
   },
   on(event, handler) {
     if (!handlers.has(event)) handlers.set(event, []);
@@ -108,6 +119,28 @@ check(handlers.has('agent/pre-step'), 'pre-step hook attached');
 check(handlers.has('agent/assistant-stream'), 'assistant-stream hook attached');
 check(handlers.has('agent/turn-stopping'), 'turn-stopping hook attached');
 check(handlers.has('agent/disposed'), 'disposed hook attached');
+
+// The operator surface has to actually reach the registry, not merely compile.
+// `/memory` is the only way to get the store off the machine as a file, and it
+// is registered conditionally — so "the plugin loaded without error" is not
+// evidence that the command exists.
+console.log('command surface');
+check(commands.length === 1, `one command registered (got ${commands.length})`);
+check(commands[0]?.name === 'memory', `the command is named memory (got "${commands[0]?.name}")`);
+check(typeof commands[0]?.handler === 'function', 'the command has a handler');
+const statusResult = await commands[0].handler({ rawInput: '', agent: undefined });
+check(statusResult?.kind === 'success', `a bare /memory answered (got ${JSON.stringify(statusResult)})`);
+check(statusResult.text.includes('记忆'), 'the command answered in Chinese');
+
+// The verbs that move the whole store are refused where the owner is not known
+// to be present. `test/commands.mjs` covers the shapes; this one covers the
+// wiring — that the guard is actually passed the agent rather than a session id
+// read once at load time.
+const refused = await commands[0].handler({
+  rawInput: 'dump D:/tmp/should-not-exist.json',
+  agent: { session: { header: { id: 'qq:onebot:group:1070071261' } } },
+});
+check(refused?.kind === 'error', `a room was refused dump (got ${JSON.stringify(refused)})`);
 
 // Every registered tool must carry a schema the runtime can render.
 console.log('tool schemas');
