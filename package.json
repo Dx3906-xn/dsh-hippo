@@ -15,6 +15,10 @@
     "LICENSE"
   ],
   "license": "MIT",
+  "scripts": {
+    "test": "node test/run-suites.mjs",
+    "audit": "node test/tableaudit.mjs && node test/columnaudit.mjs"
+  },
   "keywords": [
     "dsh",
     "dsh-plugin",

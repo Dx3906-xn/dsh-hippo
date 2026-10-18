@@ -276,6 +276,15 @@ e2e 里对应的那条断言一开始写错了，值得记下来：它数的是�
 ## 开发
 
 ```bash
+npm test                   # 18 个断言套件，跑完列出去掉的 22 个文件和理由
+npm run audit              # 表级 + 列级「只写不读」扫描
+```
+
+`npm test` 走 `test/run-suites.mjs`：排除清单写在仓库里而不是留在某个 shell 的历史里。**不在仓库里的排除清单会自己长大**——某个套件因为无聊的原因失败一次，被加进去，就再也没人发现它不跑了。
+
+单跑某个套件：
+
+```bash
 node test/smoke.mjs        # 纯算法，无 runtime 依赖
 node test/extract.mjs      # 谓词归一与矛盾决策
 node test/consolidate.mjs  # 巩固管线，stub 模型
@@ -305,6 +314,14 @@ node test/tableaudit.mjs   # 哪张表只写不读（「机制存在但不起作
 node test/columnaudit.mjs  # 再细一层：哪一列只写不读（记得把 row.field 也算成读）
 node test/leakprobe.mjs    # 某个库里还有没有「被删的原话留在活摘要里」
 ```
+
+验证的层次，从下往上：
+
+1. **断言套件**（`npm test`，18 个）：机制自己转不转。
+2. **审计脚本**（`npm run audit` + 死导出扫描）：机制有没有接线。它们不测行为，测的是「有没有人读」。
+3. **真 agent 端到端**（`e2e-forget` / `e2e-tools`）：机制转起来有没有用。要一个一次性的 `DSH_HOME`，真的烧 token，断言的是库里的行而不是回复里的话——回复可能什么都没说，而库里已经对了或者已经错了。
+
+前两层覆盖不了第三层：agenda 检测写好了但 `open_loops` 一直是空的，是模式太窄还是没人触发？端到端会回答这个。
 
 `wiring.mjs` 是唯一能证明接缝对了的测试：事件名、工具 schema、注入位置错一个，前几个测试照样全绿。
 
@@ -336,7 +353,7 @@ node test\loops.mjs 'D:/A/DSH-L/agent/home-en/hippo/memory.db'
 
 断言的是库里的行：`due=2026-10-21T15:59 (next Wednesday)`（周日说的「下周三」= 那天 23:59）和 `closed/resolution`。只看 agent 的回复会漏掉一半——它可能什么都没说。
 
-`test/` 下的文件分三类：断言套件、观察脚本（`dbstate` / `live` / `loops` / `reflections` / `show-prompt` / `inspect-*` 等），以及 e2e——观察脚本只打印不打断言，e2e（`e2e-forget` / `e2e-tools`）要一个空的 DSH_HOME 参数并且真的烧 token，所以全量跑的时候两类都要排掉（排掉是手工的：它们缺参数会报 FAIL，那不是回归）。断言套件加上这两类，覆盖的是「机制自己转不转」，覆盖不了「机制转起来有没有用」。后者只能看真实对话——比如 agenda 写好了但 `open_loops` 表一直是空的，是 `detectLoop` 太窄还是没人触发；这种问题 grep 导出的调用点比读代码快得多：
+`test/` 下的文件分三类：断言套件、观察脚本（`dbstate` / `live` / `loops` / `reflections` / `show-prompt` / `inspect-*` 等），以及 e2e——观察脚本只打印不打断言，e2e（`e2e-forget` / `e2e-tools`）要一个空的 DSH_HOME 参数并且真的烧 token。两类都由 `run-suites.mjs` 按名单排掉，**理由写在名单里**。不这么做的代价是清单自己长大：它们缺参数会报 FAIL，而这看起来像回归，于是「跳过它」变成肌肉记忆，最后没人记得哪些文件其实从没跑过。这种问题 grep 导出的调用点比读代码快得多：
 
 ```powershell
 # 哪些导出函数零调用？（文档写了、测试绿了、但对运行的 agent 毫无影响）
