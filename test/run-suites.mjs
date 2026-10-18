@@ -46,6 +46,14 @@ const NOT_SUITES = new Map([
   ['real-consolidate.mjs', 'needs a database path and a live model'],
   ['force-consolidate.mjs', 'needs a database path and a live model'],
   ['clarify-paths.mjs', 'needs a database path and a live model'],
+  ['chprobe.mjs', 'observation: prints the channel of every session, asserts nothing'],
+  ['groupprobe.mjs', 'observation: needs a database path'],
+  ['realsubjects.mjs', 'observation: needs a database path'],
+  ['sensprobe.mjs', 'observation: needs a database path'],
+  ['subjectprobe.mjs', 'observation: reproduces the group-attribution bug on an in-memory store'],
+  ['roomprobe.mjs', 'observation: compares what a room is told with what a private chat is told'],
+  ['summary-leak.mjs', 'observation: lists live summaries that still quote a room'],
+  ['clean-room-leak.mjs', 'a procedure: redacts a disclosure that already happened, writes only with --apply'],
 ]);
 
 const files = readdirSync(here)

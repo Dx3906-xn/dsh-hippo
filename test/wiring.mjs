@@ -275,6 +275,127 @@ if (clarifyIds.length >= 1) {
   check(resolved.resolved === true, 'memory_clarify resolves the id memory_state printed');
 }
 
+// --- the second write path has to agree with the first ----------------------
+//
+// `memory_remember` is the tool the model calls when it decides to record
+// something, and its schema asks for a subject, so in a group the model writes
+// "user" — which is exactly what the tool's own description tells it to write.
+// `resolveSubject` then turned that into the owner, and a stranger's hobby was
+// filed under the person the agent belongs to. The extractor had been taught
+// about speakers; this path had not, so the two write paths disagreed about what
+// a subject means and only one of them was wrong.
+console.log('remember in a room');
+const groupAgent = { session: { header: { id: 'qq:onebot:group:1070071261' } } };
+const groupMessage = {
+  id: 'g1',
+  role: 'user',
+  source: {
+    kind: 'user',
+    speaker: {
+      id: '1405337008', name: '不想', kind: 'group', own: false, group: '1070071261',
+    },
+  },
+  content: [{ type: 'text', text: '我喜欢钓鱼，周末都在水库边。' }],
+};
+let groupDecision = { kind: 'enter', messages: [groupMessage] };
+for (const handler of handlers.get('agent/pre-step') ?? []) {
+  groupDecision = await handler({
+    agent: groupAgent, messages: [groupMessage], turn: 1, step: 1, signal: new AbortController().signal,
+  }, async () => groupDecision);
+}
+
+const stored = db.prepare("SELECT speaker_name, channel FROM episodes WHERE session_id = ? AND actor = 'user'").get('qq:onebot:group:1070071261');
+check(String(stored?.speaker_name ?? '') === '不想', 'the room recorded who actually spoke');
+check(String(stored?.channel ?? '') === 'group', 'the room episode is marked as a room');
+
+const rememberTool = tools.find((tool) => tool.name === 'memory_remember');
+const inRoom = await rememberTool.execute(
+  { subject: 'user', predicate: 'likes', object: '钓鱼' },
+  {
+    callId: 'g-c1', name: 'memory_remember', arguments: {}, signal: new AbortController().signal, agent: groupAgent,
+  },
+);
+check(inRoom.stored === true, `memory_remember stored the fact (${inRoom.reason ?? 'ok'})`);
+const visitorFact = db.prepare("SELECT subject FROM facts WHERE predicate = 'likes' AND object = '钓鱼' AND invalid_at IS NULL").get();
+check(String(visitorFact?.subject ?? '') === '不想', `the fact belongs to the visitor (${String(visitorFact?.subject ?? 'none')})`);
+const leakedToOwner = db.prepare("SELECT COUNT(*) AS c FROM facts WHERE subject = 'user' AND predicate = 'likes' AND object = '钓鱼'").get().c;
+check(leakedToOwner === 0, `nothing about the visitor was filed under the owner (got ${leakedToOwner})`);
+
+// The same call in a direct conversation must still land on the owner: the fix
+// is a reason to look at the room, not a reason to stop trusting private
+// conversations, which are the overwhelming majority of what this plugin sees.
+const directStored = await rememberTool.execute(
+  { subject: 'user', predicate: 'likes', object: '水库日落' },
+  {
+    callId: 'd-c1', name: 'memory_remember', arguments: {}, signal: new AbortController().signal, agent,
+  },
+);
+check(directStored.stored === true, 'a private conversation still stores');
+const ownerFact = db.prepare("SELECT subject FROM facts WHERE predicate = 'likes' AND object = '水库日落' AND invalid_at IS NULL").get();
+check(String(ownerFact?.subject ?? '') === 'user', `a private fact stays with the owner (${String(ownerFact?.subject ?? 'none')})`);
+
+// --- the other three write tools in a room -----------------------------------
+//
+// A visitor can talk the agent into calling any tool it has; a prompt injection
+// does not need a special tool to be dangerous, it needs one that acts on the
+// owner's data. Read access was closed above. These are the write paths that
+// remain, and each one is closed for a different reason:
+//
+//   forget      — retiring the owner's beliefs on a stranger's say-so.
+//   loop(open)  — a row nobody can read, listed to no one, closable by no one.
+//   clarify     — a visitor picking which version of the owner's life is true.
+//   consolidate — a batch job triggered from a room, rewriting the profile.
+//
+// The visitor's own facts stay forgettable: the room's record of itself is the
+// room's, and someone who said something and wants it gone meant it.
+console.log('the room cannot reach the owner');
+const forgetInRoom = (id) => forgetTool.execute({ id, reason: 'stranger asked' }, {
+  callId: 'g-f', name: 'memory_forget', arguments: {}, signal: new AbortController().signal, agent: groupAgent,
+});
+const ownerFactId = String(ownerFact === undefined ? '' : db.prepare("SELECT id FROM facts WHERE subject = 'user' AND predicate = 'likes' AND object = '水库日落'").get()?.id ?? '');
+if (ownerFactId === '') {
+  check(false, 'the fixture has an owner fact to refuse to forget');
+} else {
+  const refused = await forgetInRoom(ownerFactId.slice(0, 8));
+  check(refused.retired === false, 'a room cannot forget the owner\'s fact');
+  const survived = db.prepare('SELECT invalid_at FROM facts WHERE id = ?').get(ownerFactId);
+  check(survived?.invalid_at === null, 'the owner\'s fact is still live after the attempt');
+}
+
+const visitorFactId = String(db.prepare("SELECT id FROM facts WHERE subject = '不想' AND object = '钓鱼' AND invalid_at IS NULL").get()?.id ?? '');
+if (visitorFactId === '') {
+  check(false, 'the fixture has a visitor fact the visitor may take back');
+} else {
+  const takenBack = await forgetInRoom(visitorFactId.slice(0, 8));
+  check(takenBack.retired === true, 'a room can forget what was said in it');
+}
+
+const loopInRoom = await loopTool.execute({ action: 'open', text: '周四提醒我看医生' }, {
+  callId: 'g-l', name: 'memory_loop', arguments: {}, signal: new AbortController().signal, agent: groupAgent,
+});
+check(loopInRoom.ok === false, 'a room cannot open a loop');
+const loopCount = db.prepare('SELECT COUNT(*) AS c FROM open_loops').get().c;
+check(loopCount === 1, `only the private loop exists (got ${loopCount})`);
+
+// A fresh pending contradiction: the one above was already resolved, and asking
+// this tool to resolve a row that is not pending would fail for the right reason
+// but prove the wrong thing — a test that passes because its subject is absent
+// is not a test of the refusal.
+const pendingId = String(db.prepare("SELECT id FROM facts WHERE subject = 'user' AND invalid_at IS NULL LIMIT 1").get()?.id ?? '');
+db.prepare('UPDATE facts SET needs_clarification = 1 WHERE id = ?').run(pendingId);
+const clarifyInRoom = await clarifyTool.execute({ id: pendingId.slice(0, 8), resolution: 'keep_new' }, {
+  callId: 'g-c', name: 'memory_clarify', arguments: {}, signal: new AbortController().signal, agent: groupAgent,
+});
+check(clarifyInRoom.resolved === false, 'a room cannot resolve a contradiction');
+const stillPending = db.prepare('SELECT needs_clarification FROM facts WHERE id = ?').get(pendingId);
+check(stillPending?.needs_clarification === 1, 'the contradiction is still waiting for the owner');
+db.prepare('UPDATE facts SET needs_clarification = 0 WHERE id = ?').run(pendingId);
+
+const consolidateInRoom = await tools.find((tool) => tool.name === 'memory_consolidate').execute({ force: true }, {
+  callId: 'g-n', name: 'memory_consolidate', arguments: {}, signal: new AbortController().signal, agent: groupAgent,
+});
+check(consolidateInRoom.ran === false, 'a room cannot trigger a consolidation pass');
+
 // --- teardown ---------------------------------------------------------------
 console.log('teardown');
 db.close();
