@@ -8,7 +8,7 @@
  * the wiring is live rather than merely correct.
  *
  * Usage:
- *   node test/e2e-forget.mjs <dsh-home> [dsh-bin] [profile]
+ *   node test/e2e-forget.mjs <dsh-home> [dsh-bin] [profile] [--fresh]
  *
  * The home must start from an empty memory. Build one with
  * `test/mk-test-home.ps1`, which copies the profile files and the one junction
@@ -17,16 +17,37 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { openDatabase, ensureSchema } from '../lib/db.js';
 
-const home = process.argv[2];
-const bin = process.argv[3] ?? 'D:\\A\\DSH-L\\agent\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js';
-const profile = process.argv[4] ?? 'call';
+// Flags are split out of argv before the positionals are read. Passing `--fresh`
+// straight through used to land it in `argv[3]`, the slot for the dsh binary,
+// and the run died with `node.exe: bad option: --fresh` — a flag and a path
+// sharing one array is the whole bug.
+const flags = new Set(process.argv.slice(2).filter((arg) => arg.startsWith('--')));
+const positionals = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
+
+const home = positionals[0];
+const bin = positionals[1] ?? 'D:\\A\\DSH-L\\agent\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js';
+const profile = positionals[2] ?? 'call';
 
 if (home === undefined || !existsSync(home)) {
-  console.error('usage: node test/e2e-forget.mjs <dsh-home> [dsh-bin] [profile]');
+  console.error('usage: node test/e2e-forget.mjs <dsh-home> [dsh-bin] [profile] [--fresh]');
+  process.exit(2);
+}
+
+// Freshness is checked rather than assumed: a home left over from an earlier run
+// already has the secret in it, and the forget turns then pass for the wrong
+// reason. `--fresh` is the explicit way to say "throw the previous run away".
+const dbPath = join(home, 'hippo', 'memory.db');
+if (flags.has('--fresh')) {
+  rmSync(join(home, 'hippo'), { recursive: true, force: true });
+  rmSync(join(home, 'sessions'), { recursive: true, force: true });
+  console.log("--fresh: threw away the previous run's memory and sessions");
+} else if (existsSync(dbPath)) {
+  console.error(`this home already has a memory at ${dbPath}`);
+  console.error('rebuild it with test/mk-test-home.ps1, or pass --fresh to wipe it');
   process.exit(2);
 }
 
