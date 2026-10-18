@@ -56,6 +56,7 @@ const NOT_SUITES = new Map([
   ['summary-leak.mjs', 'observation: lists live summaries that still quote a room'],
   ['clean-room-leak.mjs', 'a procedure: redacts a disclosure that already happened, writes only with --apply'],
   ['privprobe.mjs', 'observation: needs a database path, prints who spoke in each session'],
+  ['nameprobe.mjs', 'observation: prints every version of the name facts, live and dead'],
   ['snap.mjs', 'a procedure: writes a VACUUM INTO copy of a database'],
 ]);
 
