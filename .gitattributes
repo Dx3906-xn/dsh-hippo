@@ -1,0 +1,10 @@
+# The repository stores LF, always.
+#
+# This is not cosmetic. Committing from a shell where core.autocrlf is off turns
+# a five-line edit into a whole-file diff, because the index then keeps the CRLF
+# the working tree happened to have. That is what happened to README.md in
+# 821f00e and to four lib files in 3c48e93: the edit was small, the diff was not,
+# and the next reader sees a rewrite where nothing was rewritten. `text=auto`
+# makes the normalisation a property of the repository rather than of whoever's
+# git config is in effect.
+* text=auto
