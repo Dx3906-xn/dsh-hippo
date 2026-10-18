@@ -72,6 +72,23 @@ check(decide([{ id: 'f10', predicate: 'goal', object: '一直想养只猫' }],
   { subject: 'user', predicate: 'goal', object: '想养猫，但现在租的房子房东不让养' }).action !== 'invalidate',
   'one shared token is not a restatement');
 
+console.log('a finished plan retires the pending one');
+// Plans are multi-valued — a person can be doing six things at once — so an
+// unrelated plan must never retire another. But "下周要交一本猫的绘本稿" and
+// "猫绘本稿已于今天交稿" are two live statements about one manuscript, and a
+// profile that renders both says the future and the past in the same tense.
+const pendingPlan = { id: 'f11', predicate: 'plan', object: '下周要交一本关于猫的绘本稿，目前有点紧张' };
+check(decide([pendingPlan], { subject: 'user', predicate: 'plan', object: '猫绘本稿已于今天交稿，出版社下周给反馈' }).action === 'invalidate',
+  'a completion retires the plan it completes');
+check(decide([pendingPlan], { subject: 'user', predicate: 'plan', object: '绘本稿已交，出版社下周给反馈' }).action === 'invalidate',
+  'the shorter completion is still a completion');
+check(decide([pendingPlan], { subject: 'user', predicate: 'plan', object: '稿子还没交，下周继续赶' }).action === 'add',
+  'a negated completion is not a completion');
+check(decide([pendingPlan], { subject: 'user', predicate: 'plan', object: '下下周一去参加婚礼，要提前准备礼物' }).action === 'add',
+  'an unrelated completion-shaped plan does not touch it');
+check(decide([pendingPlan], { subject: 'user', predicate: 'plan', object: '这周末去苏州看妈妈，顺便问出版社绘本稿的反馈' }).action === 'add',
+  'a plan that merely mentions the same publisher is still a different plan');
+
 console.log('');
 if (failures === 0) console.log('all checks passed');
 else {
