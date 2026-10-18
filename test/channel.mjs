@@ -17,10 +17,18 @@ import { openDatabase } from '../lib/db.js';
 import { recordEpisode, addFact, liveFacts } from '../lib/store.js';
 import { renderResident } from '../lib/prompt.js';
 import { recall } from '../lib/store.js';
-import { channelOf, sessionIdOf } from '../lib/channel.js';
+import { channelOf, sessionIdOf, audienceOf } from '../lib/channel.js';
+import { applyFacts } from '../lib/consolidate.js';
 
 const db = await openDatabase(':memory:');
 const now = Date.now();
+
+/** Live facts for a subject and predicate, for the attribution checks below. */
+function fact(subject, predicate) {
+  return db.prepare(
+    'SELECT * FROM facts WHERE subject = ? AND predicate = ? AND invalid_at IS NULL',
+  ).all(subject, predicate);
+}
 
 const DIRECT = 'qq:onebot:private:3184763831';
 const GROUP = 'qq:onebot:group:1070071261';
@@ -208,5 +216,100 @@ const stillClean = renderResident(db, {
   userId: 'user', sessionId: GROUP, channel: 'group', now,
 });
 assert.ok(!stillClean.includes('海獭'), 'an owner fact leaked into the room block');
+
+// ---- a stranger's private message is not the owner either ---------------
+//
+// This was the hole behind the hole. Everything above answers "is this a room",
+// and every answer assumes the alternative is the owner. On a public account the
+// alternative is anybody. In production a stranger said hello, the agent greeted
+// them by the owner's name and mentioned the owner's week, and the extractor filed
+// the stranger's own words under the owner — overwriting a name that had been
+// right for months. The transport cannot tell the two apart; configuration can.
+
+const STRANGER = 'qq:onebot:private:999999999';
+const OWNERS = ['3184763831'];
+
+assert.equal(channelOf(db, STRANGER), 'direct', 'a stranger\'s session is still a direct one');
+assert.equal(audienceOf(DIRECT, OWNERS), 'owner', 'the configured owner was read as a stranger');
+assert.equal(audienceOf(STRANGER, OWNERS), 'stranger', 'an unknown account was read as the owner');
+
+// Not configured is not the same as "everybody is the owner". A deployment with
+// no public account must keep working without declaring itself, and the old rule
+// — direct means the owner — is what it gets.
+assert.equal(audienceOf(STRANGER, []), 'owner', 'an unconfigured deployment stopped trusting direct chats');
+
+// The id rule has to be exact. A suffix match would make `...private:31847638310`
+// the owner, and an account that can be created in a minute is not a factor.
+assert.equal(audienceOf('qq:onebot:private:31847638310', OWNERS), 'stranger', 'the id rule matched a prefix');
+
+recordEpisode(db, {
+  sessionId: STRANGER, at: now - 50, actor: 'user',
+  text: '你好，我是陌生人，你好玩',
+  speakerId: '999999999', speakerName: '陌生人', channel: 'direct',
+});
+
+const strangerBlock = renderResident(db, {
+  userId: 'user', sessionId: STRANGER, channel: 'direct', audience: 'stranger', now,
+});
+assert.ok(strangerBlock.length > 0, 'the stranger block rendered as empty');
+for (const secret of ['林晚', '晚晚', '合肥', '糖尿病', '插画师', '海獭']) {
+  assert.ok(
+    !strangerBlock.includes(secret),
+    `the owner's private detail "${secret}" reached a stranger`,
+  );
+}
+// A negated assertion on an empty string passes for the wrong reason, so the
+// block must also say the thing it is supposed to say.
+assert.ok(
+  /不是你主人|not the person you belong to/.test(strangerBlock),
+  'the stranger block does not say who this is not',
+);
+assert.ok(
+  strangerBlock.includes('陌生人'),
+  'the stranger block does not name the person it is talking to',
+);
+
+// The owner's own chat is unchanged by any of this.
+const ownerDirect = renderResident(db, {
+  userId: 'user', sessionId: DIRECT, channel: 'direct', audience: 'owner', now,
+});
+assert.ok(ownerDirect.includes('林晚'), 'the owner lost their name when strangers were introduced');
+assert.notEqual(strangerBlock, ownerDirect, 'a stranger and the owner get the same block');
+
+// ---- a stranger's words are filed under them, not the owner -------------
+
+const strangerEpisode = recordEpisode(db, {
+  sessionId: STRANGER, at: now - 40, actor: 'user',
+  text: '我叫张三，我喜欢下棋',
+  speakerId: '999999999', speakerName: '陌生人', channel: 'direct',
+});
+applyFacts(db, [{
+  subject: 'user',
+  predicate: 'likes',
+  object: '下棋',
+  confidence: 0.9,
+  evidence: [strangerEpisode],
+}], 'user', OWNERS);
+
+assert.equal(fact('user', 'likes').filter((row) => row.object === '下棋').length, 0,
+  'a stranger\'s preference was filed as the owner\'s');
+assert.equal(fact('陌生人', 'likes').filter((row) => row.object === '下棋').length, 1,
+  'the stranger\'s preference was not filed under their own name');
+
+// The owner, by contrast, is still the owner — in private and in a room.
+const ownerEpisode = recordEpisode(db, {
+  sessionId: DIRECT, at: now - 30, actor: 'user',
+  text: '我喜欢下棋',
+  speakerId: '3184763831', speakerName: '66', channel: 'direct',
+});
+applyFacts(db, [{
+  subject: 'user',
+  predicate: 'likes',
+  object: '下棋',
+  confidence: 0.9,
+  evidence: [ownerEpisode],
+}], 'user', OWNERS);
+assert.equal(fact('user', 'likes').filter((row) => row.object === '下棋').length, 1,
+  'the configured owner stopped being the owner');
 
 console.log('channel: all checks passed');

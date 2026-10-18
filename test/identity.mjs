@@ -67,7 +67,7 @@ console.log('both write paths agree about subjects');
   const start = source.indexOf("name: 'memory_remember'");
   const end = source.indexOf("name: 'memory_forget'");
   const body = source.slice(start, end === -1 ? undefined : end);
-  check(body.includes('resolveSubject('), 'memory_remember normalises the subject');
+  check(body.includes('resolveSpeakerSubject('), 'memory_remember normalises the subject');
   check(body.includes('ownerAliases('), 'it resolves against the owner\'s stored names');
 }
 

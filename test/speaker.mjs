@@ -14,6 +14,11 @@ import { applyFacts } from '../lib/consolidate.js';
 
 const db = await openDatabase(':memory:');
 
+// Who the deployment says the owner is. This is configuration, not something the
+// transport can prove: a private chat only proves two parties are alone. The test
+// names it for the same reason the config does.
+const OWNERS = ['3184763831'];
+
 /** A batch of episodes as `recordEpisode` would return them. */
 function episode(overrides) {
   return {
@@ -45,7 +50,7 @@ applyFacts(db, [{
   object: '玩原神',
   confidence: 0.9,
   evidence: [visitor.id],
-}], 'user') ;
+}], 'user', OWNERS);
 
 assert.equal(fact('user', 'likes').length, 0, 'a stranger\'s preference was filed as the owner\'s');
 assert.equal(fact('不想', 'likes').length, 1, 'the visitor\'s preference was not filed under their name');
@@ -72,7 +77,7 @@ applyFacts(db, [{
   object: '海獭',
   confidence: 0.9,
   evidence: [ownerSong.id],
-}], 'user');
+}], 'user', OWNERS);
 
 assert.equal(fact('user', 'likes').length, 1, 'the owner\'s own group message was attributed to the group');
 assert.equal(fact('user', 'likes')[0].object, '海獭');
@@ -90,7 +95,7 @@ applyFacts(db, [{
   object: '周末去爬山',
   confidence: 0.8,
   evidence: [mixedA.id, mixedB.id],
-}], 'user');
+}], 'user', OWNERS);
 
 assert.equal(fact('甲', 'plan').length + fact('乙', 'plan').length, 0, 'a mixed batch was attributed to one speaker');
 assert.equal(fact('user', 'plan').length, 1, 'a mixed batch should keep the model\'s subject');
@@ -111,7 +116,7 @@ applyFacts(db, [{
   object: '戒烟',
   confidence: 0.9,
   evidence: [priv],
-}], 'user');
+}], 'user', OWNERS);
 
 assert.equal(fact('user', 'habit').length, 1, 'a private message stopped being the owner\'s');
 
@@ -124,7 +129,7 @@ applyFacts(db, [{
   predicate: 'goal',
   object: '学会游泳',
   confidence: 0.9,
-}], 'user');
+}], 'user', OWNERS);
 
 assert.equal(fact('user', 'goal').length, 1, 'an explicit remember lost its subject');
 

@@ -52,8 +52,11 @@ const NOT_SUITES = new Map([
   ['sensprobe.mjs', 'observation: needs a database path'],
   ['subjectprobe.mjs', 'observation: reproduces the group-attribution bug on an in-memory store'],
   ['roomprobe.mjs', 'observation: compares what a room is told with what a private chat is told'],
+  ['sceneprobe.mjs', 'observation: prints the owner, stranger and room blocks side by side'],
   ['summary-leak.mjs', 'observation: lists live summaries that still quote a room'],
   ['clean-room-leak.mjs', 'a procedure: redacts a disclosure that already happened, writes only with --apply'],
+  ['privprobe.mjs', 'observation: needs a database path, prints who spoke in each session'],
+  ['snap.mjs', 'a procedure: writes a VACUUM INTO copy of a database'],
 ]);
 
 const files = readdirSync(here)
