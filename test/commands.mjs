@@ -72,12 +72,33 @@ const dumped = asOwner(`dump ${file}`);
 assert.equal(dumped.kind, 'success', `dump failed: ${dumped.text}`);
 assert.match(dumped.text, /已导出/, 'dump did not say it wrote anything');
 assert.match(dumped.text, /1 情景/, 'dump did not report what it wrote');
+assert.match(dumped.text, /含已退休的/, 'dump did not say its fact count includes retired beliefs');
 
 const written = JSON.parse(readFileSync(file, 'utf8'));
 assert.equal(written.format, DUMP_FORMAT, 'the file is not a memory dump');
 assert.equal(written.tables.episodes.length, 1, 'the file is missing the episode');
 assert.equal(written.tables.facts.length, 1, 'the file is missing the fact');
 assert.equal(written.tables.open_loops.length, 1, 'the file is missing the open loop');
+
+// A retired fact is still exported. "I used to believe this" is part of the
+// record, and the count a dump reports is rows in the file, not live beliefs —
+// which is why it is allowed to disagree with `status`.
+addFact(db, {
+  subject: '妈妈',
+  predicate: 'works_at',
+  object: '苏州一家医院',
+  confidence: 0.8,
+  source: 'explicit',
+  now,
+});
+db.prepare("UPDATE facts SET invalid_at = ? WHERE subject = '妈妈'").run(now);
+asOwner(`dump ${file}`);
+const withRetired = JSON.parse(readFileSync(file, 'utf8'));
+assert.equal(withRetired.tables.facts.length, 2, 'a retired fact was left out of the dump');
+assert.equal(asOwner('').text.includes('1 事实'), true, 'status counted a retired fact as live');
+db.prepare("DELETE FROM facts WHERE subject = '妈妈'").run();
+// Put the single-fact dump back, because `import` below measures against it.
+asOwner(`dump ${file}`);
 
 // A dump with no path is a question, and the answer is how to ask it.
 const noPath = asOwner('dump');

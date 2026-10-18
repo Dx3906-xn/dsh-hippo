@@ -58,6 +58,7 @@ const NOT_SUITES = new Map([
   ['privprobe.mjs', 'observation: needs a database path, prints who spoke in each session'],
   ['nameprobe.mjs', 'observation: prints every version of the name facts, live and dead'],
   ['repair-name.mjs', 'a procedure: retires the name a stranger overwrote, writes only with --apply'],
+  ['real-command.mjs', 'observation: runs /memory against a real database and prints the answers'],
   ['snap.mjs', 'a procedure: writes a VACUUM INTO copy of a database'],
 ]);
 
