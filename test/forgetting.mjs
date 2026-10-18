@@ -29,6 +29,10 @@ import {
   redactEpisode,
   redactRecent,
   addLink,
+  addReflection,
+  liveReflections,
+  markConsolidated,
+  unconsolidatedEpisodes,
 } from '../lib/store.js';
 import { asksToForget } from '../lib/gate.js';
 import { demoteWeakFacts } from '../lib/consolidate.js';
@@ -132,6 +136,52 @@ check('one recent episode is forgotten', () => {
   const left = db.prepare("SELECT text FROM episodes WHERE session_id = 's2' AND redacted_at IS NULL ORDER BY at ASC").all();
   assert.equal(left.length, 2);
   assert.equal(left.some((row) => row.text.includes('瞎说')), false);
+});
+
+console.log('summaries that quoted it');
+const sessionThree = [
+  recordEpisode(db, { sessionId: 's3', actor: 'user', text: '我准备下个月辞职。' }),
+  recordEpisode(db, { sessionId: 's3', actor: 'user', text: '其实我上个月被裁了，一直没敢说。' }),
+  recordEpisode(db, { sessionId: 's3', actor: 'user', text: '今天天气挺好的。' }),
+];
+const summary = addReflection(db, {
+  kind: 'summary',
+  text: '3 条消息，主要在说：我准备下个月辞职。其实我上个月被裁了，一直没敢说。',
+  level: 1,
+  confidence: 0.7,
+  evidenceEpisodes: sessionThree,
+});
+markConsolidated(db, sessionThree, summary);
+
+check('the summary is live and cites all three messages', () => {
+  const cited = db.prepare('SELECT COUNT(*) AS n FROM reflection_evidence WHERE reflection_id = ?').get(summary);
+  assert.equal(Number(cited.n), 3);
+  assert.ok(liveReflections(db).some((row) => String(row.id) === summary));
+});
+
+const forget = redactEpisode(db, sessionThree[1], { reason: 'requested' });
+
+check('redaction reports the summaries it invalidated', () => {
+  assert.equal(forget.reflectionsInvalidated, 1);
+});
+
+check('the summary stops being live and its text is gone', () => {
+  assert.equal(liveReflections(db).some((row) => String(row.id) === summary), false);
+  const row = db.prepare('SELECT text, invalid_at FROM reflections WHERE id = ?').get(summary);
+  assert.equal(row.text, '');
+  assert.notEqual(row.invalid_at, null);
+});
+
+check('the forgotten words survive in no live summary', () => {
+  const live = liveReflections(db, 50).map((row) => String(row.text)).join('\n');
+  assert.equal(live.includes('被裁'), false);
+});
+
+check('the messages it covered go back in the queue, the redacted one does not', () => {
+  const ids = unconsolidatedEpisodes(db, 50).map((row) => String(row.id));
+  assert.ok(ids.includes(sessionThree[0]), 'a surviving message should be summarized again');
+  assert.ok(ids.includes(sessionThree[2]), 'a surviving message should be summarized again');
+  assert.equal(ids.includes(sessionThree[1]), false, 'the redacted message must not be read again');
 });
 
 console.log('decay');

@@ -75,6 +75,8 @@ mem0 的形状，两处不同：
 
 **时钟。** 常驻段第一行是「现在是 2026-10-18 凌晨」。DSH 有官方的 `dsh-time-context` 包，但 companion preset 不挂它（它占一份 prompt 预算，而这里已经有常驻段了），没有这一行模型不知道今天是几号——「明天就要交稿了」存进去三个月后仍然写着「明天」。
 
+**注入的消息必须带着身份进日志。** 召回段和 agenda 段是插件自己造出来的 user 消息，追加进这一轮的 batch 后会被会话日志原样落盘。DSH 的会话日志要校验它存下的每一条消息，缺 `id` 就拒收——而它拒的是**整个会话**：下一次 `--session-id` 续接时整段历史都读不出来，报 `stored session "..." is corrupt: event at seq N lacks an identified message`。手搓一个 `{role, content, source}` 对象字面量正好落进这个坑，而且发作得极其隐蔽：之前每轮召回块和 agenda 都是空的，什么都不注入，所以一直没事；等到记忆第一次真的有东西要说（那轮刚有一条待澄清），那一句才把会话写坏，再下一轮续接才炸。造消息一律走 `createUserMessage()`——它顺手把 id 和冻结一起做了。这条错误单测同样看不见，因为 `apply()` 的桩上下文不校验事件形状；`test/wiring.mjs` 现在会断言注入 batch 里每条消息都有 id。
+
 激活分数是五个因子的乘积：
 
 ```
@@ -130,6 +132,8 @@ score = (0.5·activation + 1.0·relevance + 0.4·salience + 0.3·recency) · r �
 **衰减**是系统判断「这条不重要」。`lib/fsrs.js` 是 FSRS-5 的简化实现，19 个权重 + 可提取度公式 `R(t) = (1 + FACTOR·t/S)^DECAY`。检索得越好，稳定性越涨、下次越难忘；21 天没被碰过、置信度低、可提取度掉下来的事实，`demoteWeakFacts` 每轮微降一点置信度，掉到 0.18 以下就退休（保留行和版本链）。**高可提取度本身就是它重要的证据**，所以 R ≥ 0.55 的一律不动。姓名、昵称、生日这类谓词进 `PINNED_PREDICATES`，永不衰减——忘掉一个人住哪个城市是合理的，忘掉名字是 bug。
 
 **遗忘**是人要求「别记这个」，必须立即、彻底、不经过模型判断。`asksToForget` 命中后直接 `redactRecent`：清空 `episodes.text`、删 FTS 行、删 evidence 行、只由被删的那句话支撑的事实一并退休。走模型自主决定意味着「记忆系统必须永远服从的那一条指令」恰好是它可以拒绝的那一条。
+
+**摘要也是那句话的一份副本。** reflection 是用它覆盖的那几条消息写出来的，所以被忘掉的原话**逐字**躺在摘要正文里，而摘要「最近聊过的」每轮都进常驻段。没有句子级的溯源可以精确剪掉它，所以引用了被删 episode 的摘要整条作废、正文清空，它覆盖过的其余消息退回未巩固队列（被删的那条除外），下一轮不带它重新成摘要。**只删 episode 不删摘要，等于把那句话换个地方留在提示词里。**
 
 这两件事曾经共用 `episodes.superseded_by` 一列，后果是**每个被巩固过的 episode 都看起来已被遗忘**，而真正的遗忘请求在那些行上是 no-op。schema 4 把 `redacted_at` / `redacted_reason` 拆了出来——巩固标记和遗忘标记不是同一种事，别让它们抢一个格子。
 
@@ -248,14 +252,20 @@ dsh plugin add dsh-hippo
 
 | 工具 | 用途 |
 | --- | --- |
-| `memory_recall` | 精确检索。**不带模糊回退**：查不到就说查不到。 |
+| `memory_recall` | 精确检索。**不带模糊回退**：查不到就说查不到。打印每条结果的短 id。 |
 | `memory_remember` | 写一条事实，走同一套决策（含主语归一）。 |
-| `memory_forget` | 退休一条事实。从不物理删除。 |
-| `memory_open_loops` | 列出还没等到回音的事。 |
-| `memory_loop` | 手动开/关一个 loop。 |
-| `memory_state` | 计数：本人事实、他人事实、loop、待澄清、今日 token。 |
+| `memory_forget` | 用 id 退休一条事实，或用 id 忘掉某句原话（连带引用它的摘要）。从不物理删除。 |
+| `memory_open_loops` | 列出还没等到回音的事，每条带短 id。 |
+| `memory_loop` | 手动开/关一个 loop。关闭要的是 `memory_open_loops` 打印的 id。 |
+| `memory_state` | 计数、待澄清清单（带 id）、以及模型眼中的常驻段。 |
 | `memory_consolidate` | 手动触发一次巩固。 |
-| `memory_clarify` | 回答一条待澄清：`keep_new` / `keep_old` / `both_wrong`。 |
+| `memory_clarify` | 用 `memory_state` 打印的 id 回答一条待澄清：`keep_new` / `keep_old` / `both_wrong`。 |
+
+**id 必须由某个工具打出来，否则这个工具等于不存在。** 三个工具（`memory_forget`、`memory_loop` 关闭、`memory_clarify`）唯一的输入是一个 id，而它们只能拿到别的工具打印过的 id。原来 `memory_recall` 只打内容、`memory_state` 只打计数，于是这三个工具在真实对话里**从来无法被调用**：模型想删掉某条被点名的记忆，手里没有任何东西可以传，只能去磁盘上找数据库。单测里每个工具都自洽，所以这件事在 30 个套件全绿的情况下存在了很久。现在 id 打印成前 8 位（够唯一、省 context），所有查表都先精确匹配再唯一前缀匹配——前缀撞上两行就返回空，猜错一条记忆不是记忆系统该做的事。`test/wiring.mjs` 里加了一段「一个工具打印的 id 必须在消费它的工具里解得开」的往返测试，这才是能抓住这类错的形状。
+
+**打印出来的 id 还得真的解得开——而这个问题只能在第二个主语存在时才暴露。** 第一版的 `memory_forget` 在自己的事实里找 id：`liveFacts(db, { subject: owner })`。读的路径从来不按主语过滤（`memory_recall`、`memory_state` 都会把「妈妈 / works_at」连 id 一起打印出来），只有这一个写的路径过滤了。于是真机上一件很具体的事发生了：模型想纠正一条被安错人的记录，先 `memory_recall` 拿到 `[0dff2dee]`，再 `memory_forget 0dff2dee`，得到「no such memory」——**一条刚刚被打印成 live 的事实，工具说它不存在**。`test/wiring.mjs` 的夹具此前每一条事实都属于主人，所以那段 id 往返测试是绿的：**只处理一个主语的测试看不见作用域问题，它需要第二个主语存在**。现在夹具里有一条 `妈妈 / works_at`，断言就是「他人事实的 id 也能被退休」。
+
+e2e 里对应的那条断言一开始写错了，值得记下来：它数的是结果里出现几次「no such memory」，一次都不许有。跑出来有，但原因和缺陷无关——模型在**同一个 step 里**同时发了 `memory_remember`（改成苏州）和 `memory_forget`（退掉北京那条），remember 先把那一行退休了，forget 才轮到执行，于是工具**正确地**回了一句「只退得掉还活着的事实」。一次拒绝因此不是缺口，把拒绝数当指标才是。真正要证的是模型**没有猜 id**：现在从工具结果里收集所有 `[xxxxxxxx]`（只收结果，不收模型自己的话），再检查它传给工具的每个 id 都在这张表里——「ids passed to tools: 4; not printed by any tool: 0」。这才是「id 由工具生产、由工具消费」这条链的可证形式，而它不需要假设模型会按顺序行事。
 
 ## 成本
 
@@ -272,7 +282,11 @@ node test/consolidate.mjs  # 巩固管线，stub 模型
 node test/graph.mjs        # 关联图、扩散、信任信号、情绪、常驻段散文
 node test/agenda.mjs       # loop 检测、解决判定、澄清浮现、agenda 渲染（中英两套词表）
 node test/agenda-due.mjs   # 到期与未到期 loop 的取舍
-node test/forgetting.mjs   # 遗忘请求、redaction、衰减
+node test/forgetting.mjs   # 遗忘请求、redaction、引用了被删原话的摘要一并作废
+node test/e2e-forget.mjs   # 真 agent 跑一句「忘掉前面那些」，再查库里还剩什么
+node test/e2e-tools.mjs    # 真 agent 只靠工具删掉一条被点名的记忆、并处理一条矛盾
+node test/mk-test-home.ps1 # 建上面两个 e2e 用的空 home（别用 Copy-Item 复制活的 home）
+node test/session-log.mjs  # 不是套件：会话日志的读法（一帧一帧解，不是只解第一帧）
 node test/salience.mjs     # 情绪唤醒进排序
 node test/identity.mjs     # 主语归一、他人事实、索引完整性
 node test/i18n.mjs         # 英文路径没有半截中文
@@ -283,9 +297,13 @@ node test/grading.mjs      # 回忆被复述/被纠正时，FSRS 收到的是哪
 node test/pending.mjs      # 待评分的回忆快照能跨进程存活，且读一次就消费掉
 node test/completion.mjs   # 完成态覆盖它完成的那条计划，且只覆盖那一条
 node test/wiring.mjs       # 真插件 + 假 Cordis context，走一遍完整对话
+node test/consistency.mjs  # 单值谓词永远只有一条 live 行：三条写路径都得退役旧的
 node test/dbstate.mjs      # 打印一个真实库的现状（不是断言，是观察用）
 node test/live.mjs         # 按 subject/predicate 列出库里全部事实，看它到底信什么
 node test/migrate.mjs      # 让一个库副本走完迁移路径并打印结果（升级前先跑这个）
+node test/tableaudit.mjs   # 哪张表只写不读（「机制存在但不起作用」的形状）
+node test/columnaudit.mjs  # 再细一层：哪一列只写不读（记得把 row.field 也算成读）
+node test/leakprobe.mjs    # 某个库里还有没有「被删的原话留在活摘要里」
 ```
 
 `wiring.mjs` 是唯一能证明接缝对了的测试：事件名、工具 schema、注入位置错一个，前几个测试照样全绿。
@@ -318,7 +336,7 @@ node test\loops.mjs 'D:/A/DSH-L/agent/home-en/hippo/memory.db'
 
 断言的是库里的行：`due=2026-10-21T15:59 (next Wednesday)`（周日说的「下周三」= 那天 23:59）和 `closed/resolution`。只看 agent 的回复会漏掉一半——它可能什么都没说。
 
-`test/` 下的文件还分两类：断言套件和观察脚本（`dbstate` / `live` / `loops` / `reflections` / `show-prompt` / `inspect-*` 等），后者不打断言、只打印，所以全量跑的时候要把它们排掉。这些文件加上观察脚本，覆盖的是「机制自己转不转」，覆盖不了「机制转起来有没有用」。后者只能看真实对话——比如 agenda 写好了但 `open_loops` 表一直是空的，是 `detectLoop` 太窄还是没人触发；这种问题 grep 导出的调用点比读代码快得多：
+`test/` 下的文件分三类：断言套件、观察脚本（`dbstate` / `live` / `loops` / `reflections` / `show-prompt` / `inspect-*` 等），以及 e2e——观察脚本只打印不打断言，e2e（`e2e-forget` / `e2e-tools`）要一个空的 DSH_HOME 参数并且真的烧 token，所以全量跑的时候两类都要排掉（排掉是手工的：它们缺参数会报 FAIL，那不是回归）。断言套件加上这两类，覆盖的是「机制自己转不转」，覆盖不了「机制转起来有没有用」。后者只能看真实对话——比如 agenda 写好了但 `open_loops` 表一直是空的，是 `detectLoop` 太窄还是没人触发；这种问题 grep 导出的调用点比读代码快得多：
 
 ```powershell
 # 哪些导出函数零调用？（文档写了、测试绿了、但对运行的 agent 毫无影响）
@@ -330,6 +348,10 @@ foreach($f in Get-ChildItem lib\*.js){
 ```
 
 这张清单曾经一次列过九个 —— `demoteWeakFacts`、`liveReflections`、`asksToForget`、`fadingFacts` 全在上面。测试全绿，功能全死。
+
+同一个形状换个粒度就是 `tableaudit.mjs`：**哪张表只写不读**。`reflection_evidence` 长期列在上面——巩固时写进去、迁移时回填过，运行时从来没有一条语句读它。一张没人读的表不是备份，是一个没人来的房间：它的存在让「摘要知道自己是哪几句写出来的」看起来已经实现了，而实际上没有任何行为依赖它，所以「忘掉那句原话」也就到不了覆盖它的摘要。**写入方和读取方如果是两个人写的，中间那根线没人验。**
+
+还有一类错在**观察工具自己身上**，它比被测的代码更容易骗人，因为它一骗就骗在「看起来像被测代码坏了」的方向。`test/session-log.mjs` 就是为这个存在的：DSH 的会话日志是按 flush 写成**很多个 zstd 帧**的（一次四轮的对话 57 帧），而 Node 暴露的每个解压 API 都**只解第一帧**——`zstdDecompressSync()` 和 `createZstdDecompress()` 都只返回 188 字符的会话头，不报错、不提示截断。于是 e2e 里「模型到底调没调这个工具」的字符串搜索对每个工具都返回 false，而库里明明有那些工具写下的行；看起来完全是工具链断了。现在按帧魔数切开逐帧解，并且 e2e 在读完之后先断言「这份 transcript 至少 1000 字符」——**观察者的输出要先自证，再拿去当证据**。同一个文件另外导出 `toolCallsOf()` 与 `printedIdsOf()`，把「模型到底把什么传给了工具」和「工具到底打印过哪些 id」变成两个集合，于是可以断言前者是后者的子集；按字符串数错误出现几次是做不到这件事的，因为它统计的是模型的随机行为，不是系统的契约。
 
 ## 不做的事
 
@@ -354,6 +376,7 @@ foreach($f in Get-ChildItem lib\*.js){
 - 他人事实只有一层（「妈妈 health」），没有真正的社交图谱：谁是朋友、谁和谁有关系、某个话题该不该在某个在场者面前提。
 - 相对时间解析的是**说出口的**日期，不是**事件**锚点：「过年之前」「发了工资以后」「等结果出来」这类没有解析，英文的 `before the holidays` 同理。loop 的开启、关闭、渲染都已经是双语的，日期解析也是了，剩下的是这类没有日历坐标的说法。
 - 情绪词表、话题扩展、抽取提示词都以中文为主；英文能跑通 loop 与渲染，但抽取质量没有在英文对话上验证过。
+- 遗忘的粒度是「整条摘要」：一句被删的原话会让覆盖它的整条 reflection 作废，哪怕那条摘要里其余七句都还在。句子级的溯源要么存 span 偏移（重构摘要时就失效），要么重写摘要（要再调一次模型），都还没有。
 
 ## License
 

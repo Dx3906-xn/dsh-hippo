@@ -31,6 +31,9 @@ const llm = {
       ? JSON.stringify({
         facts: [
           { subject: 'user', predicate: 'has_pet', object: '年糕（一只橘猫）', confidence: 0.95, sensitivity: 'personal', episode: 0 },
+          // A fact about someone other than the owner, on purpose: every read
+          // path can print it, and one write path used to refuse it.
+          { subject: '妈妈', predicate: 'works_at', object: '在出版社做美编', confidence: 0.9, episode: 0 },
         ],
       })
       : '好。';
@@ -191,6 +194,17 @@ check(
 );
 check(laterDecision.messages[laterDecision.messages.length - 1] === injected[0], 'recall is appended after the user turn');
 
+// The session log validates every message it stores and refuses one without an
+// id, which took the whole session down with it: the injected block is built by
+// hand here, so an object literal used to reach the log unidentified and the
+// next resume failed with "event at seq N lacks an identified message".
+for (const message of laterDecision.messages) {
+  check(
+    typeof message?.id === 'string' && message.id !== '',
+    `every message in the batch is identified (${String(message?.source?.form ?? message?.source?.kind ?? '?')})`,
+  );
+}
+
 // --- tool round trip --------------------------------------------------------
 console.log('tools');
 const recallTool = tools.find((tool) => tool.name === 'memory_recall');
@@ -201,6 +215,65 @@ check(JSON.stringify(recalled).includes('年糕'), 'memory_recall finds the cat'
 const stateTool = tools.find((tool) => tool.name === 'memory_state');
 const state = await stateTool.execute({}, { callId: 'c2', name: 'memory_state', arguments: {}, signal: new AbortController().signal });
 check(typeof state?.facts === 'number', 'memory_state reports a fact count');
+
+// --- an id printed by one tool has to resolve in the tool that takes it -----
+// Three tools take an id and can only ever be called with an id another tool
+// printed. Nothing above this line would have noticed if none did: the suite
+// stayed green while memory_forget, memory_loop(close) and memory_clarify were
+// unreachable in a real conversation -- the model asked to forget something and
+// had nothing to pass.
+console.log('id contract');
+const openTool = tools.find((tool) => tool.name === 'memory_open_loops');
+const loopTool = tools.find((tool) => tool.name === 'memory_loop');
+const forgetTool = tools.find((tool) => tool.name === 'memory_forget');
+const clarifyTool = tools.find((tool) => tool.name === 'memory_clarify');
+const exec = (n) => ({ callId: `id-${n}`, name: n, arguments: {}, signal: new AbortController().signal });
+const printed = (tool, value) => tool.output.render({}, value).map((block) => block.text).join('\n');
+const idsIn = (text) => [...text.matchAll(/\[([0-9a-f]{8})\]/g)].map((match) => match[1]);
+
+const recalledText = printed(recallTool, recalled);
+const recalledIds = idsIn(recalledText);
+check(recalledIds.length >= 1, `memory_recall prints an id (${recalledText.split('\n')[0] ?? ''})`);
+if (recalledIds.length >= 1) {
+  const forgot = await forgetTool.execute({ id: recalledIds[0], reason: 'test' }, exec('memory_forget'));
+  check(forgot.retired === true, 'memory_forget accepts the id memory_recall printed');
+}
+
+// ...including a fact that is not about the owner. This is the case that got out:
+// memory_forget searched `liveFacts(db, { subject: owner })` while memory_recall
+// and memory_state printed ids for everyone, so "妈妈 works_at ..." was readable
+// and unforgettable. The suite above passed because every fact it built belonged
+// to the owner. A test that only ever handles one subject cannot see a scoping
+// bug -- it needs a second one to exist.
+const otherId = db.prepare("SELECT id FROM facts WHERE subject <> 'user' AND invalid_at IS NULL LIMIT 1").get();
+if (otherId === undefined) {
+  check(false, 'the fixture has a fact about someone other than the owner');
+} else {
+  const text = String(otherId.id);
+  const forgetOther = await forgetTool.execute({ id: text, reason: 'test' }, exec('memory_forget'));
+  check(forgetOther.retired === true, `memory_forget accepts a fact about someone else (${text.slice(0, 8)})`);
+  const stillLive = db.prepare('SELECT invalid_at FROM facts WHERE id = ?').get(text);
+  check(stillLive?.invalid_at !== null, 'the other subject\'s fact is actually retired');
+}
+
+await loopTool.execute({ action: 'open', text: '帮朋友问一下搬家的事' }, exec('memory_loop'));
+const loopsText = printed(openTool, await openTool.execute({}, exec('memory_open_loops')));
+const loopIds = idsIn(loopsText);
+check(loopIds.length >= 1, `memory_open_loops prints an id (${loopsText})`);
+if (loopIds.length >= 1) {
+  const closed = await loopTool.execute({ action: 'close', id: loopIds[0] }, exec('memory_loop'));
+  check(closed.ok === true, 'memory_loop closes the loop id memory_open_loops printed');
+}
+
+const anyFact = db.prepare('SELECT id FROM facts LIMIT 1').get();
+db.prepare('UPDATE facts SET needs_clarification = 1 WHERE id = ?').run(String(anyFact.id));
+const stateText = printed(stateTool, await stateTool.execute({}, exec('memory_state')));
+const clarifyIds = idsIn(stateText);
+check(clarifyIds.length >= 1, 'memory_state prints the contradiction id');
+if (clarifyIds.length >= 1) {
+  const resolved = await clarifyTool.execute({ id: clarifyIds[0], resolution: 'keep_new' }, exec('memory_clarify'));
+  check(resolved.resolved === true, 'memory_clarify resolves the id memory_state printed');
+}
 
 // --- teardown ---------------------------------------------------------------
 console.log('teardown');
