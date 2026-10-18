@@ -119,6 +119,44 @@ check('a generic verb cannot borrow its subject from the loop', () => {
   assert.equal(loopResolvedBy('我最近在戒烟，已经两周了。', '晚饭好了。'), false);
 });
 
+// English is not selected by config: the render language and the language the
+// person types in are independent, so both pattern sets are always live. An
+// earlier version had the whole detection half in Chinese only, which left an
+// English deployment with a rendering path that read a table nothing ever wrote.
+console.log('english');
+check('english loops are opened', () => {
+  assert.equal(detectLoop("I'm trying to quit smoking, two weeks now.")?.why, '正在进行的事');
+  assert.equal(detectLoop('I have to hand in the draft next week.')?.why, '有期限的事');
+  assert.equal(detectLoop('My mom is in the hospital again.')?.why, '对方身边的事');
+  assert.equal(detectLoop("I haven't decided whether to go back for Christmas.")?.why, '还没定的事');
+  assert.equal(detectLoop("Let's wait and see how it goes.")?.why, '悬着的事');
+});
+
+check('english small talk is still not a loop', () => {
+  assert.equal(detectLoop('I had a nice walk today, the weather was lovely.'), null);
+  assert.equal(detectLoop('How are you doing?'), null);
+});
+
+check('an english resolution closes the loop it is about', () => {
+  assert.equal(loopResolvedBy('I am trying to quit smoking.', 'I finally quit.'), true);
+  assert.equal(loopResolvedBy('I have to hand in the draft next week.', 'I handed it in this morning.'), true);
+  assert.equal(loopResolvedBy('My mom is in the hospital.', 'She is out of hospital now.'), true);
+});
+
+check('an english relapse does not close it', () => {
+  assert.equal(loopResolvedBy('I am trying to quit smoking.', "I didn't quit, I started again."), false);
+});
+
+check('an unrelated english completion does not close it', () => {
+  assert.equal(loopResolvedBy('I have to hand in the draft next week.', 'I handed the wedding gift over.'), false);
+  assert.equal(loopResolvedBy('I have to hand in the draft next week.', 'The gift is ready.'), false);
+});
+
+check('a quote from an english message is a sentence, not a paragraph', () => {
+  const loop = detectLoop("Anyway, I'm trying to quit smoking, it's been two weeks. Other stuff happened too.");
+  assert.equal(loop?.text, "I'm trying to quit smoking, it's been two weeks.");
+});
+
 console.log('rendering');
 check('empty agenda renders nothing', () => {
   assert.equal(renderAgenda(db, { now: Date.now() }), '');
