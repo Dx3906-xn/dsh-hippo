@@ -311,6 +311,27 @@ dsh plugin add dsh-hippo
 
 e2e 里对应的那条断言一开始写错了，值得记下来：它数的是结果里出现几次「no such memory」，一次都不许有。跑出来有，但原因和缺陷无关——模型在**同一个 step 里**同时发了 `memory_remember`（改成苏州）和 `memory_forget`（退掉北京那条），remember 先把那一行退休了，forget 才轮到执行，于是工具**正确地**回了一句「只退得掉还活着的事实」。一次拒绝因此不是缺口，把拒绝数当指标才是。真正要证的是模型**没有猜 id**：现在从工具结果里收集所有 `[xxxxxxxx]`（只收结果，不收模型自己的话），再检查它传给工具的每个 id 都在这张表里——「ids passed to tools: 4; not printed by any tool: 0」。这才是「id 由工具生产、由工具消费」这条链的可证形式，而它不需要假设模型会按顺序行事。
 
+## 带走：导出、导入与 `/memory`
+
+一个只能通过 SQLite 文件离开机器的记忆，人没法审阅、没法选择性备份、也搬不到新机器而不必信任一堆字节。所以有一个 JSON 形态：
+
+```
+/memory                      # 计数：情景几条、事实几条、未了的事几条、今天烧了多少 token
+/memory dump <文件>           # 整个库写成一个 JSON
+/memory inspect <文件>        # 这个文件里有什么，以及它**按设计不导出**什么
+/memory import <文件>         # 合并进来
+```
+
+**为什么是命令而不是工具。** 每个工具都是「任何人只要能说服模型调用它」就能用到的，而「把我的全部记忆写到这个路径」不属于那一类。导出和导入是操作者动作，所以放在只有键盘前那个人够得着的地方。房间里和陌生人私聊里调用 `dump` / `import` 会被拒绝（`status` 不拒：计数不是泄密）。
+
+三条取舍：
+
+- **导入是合并，不是替换。** 每一行 `INSERT OR IGNORE`，id 已存在就原样不动。替换必须先回答「备份之后被编辑过的那条该怎么办」，而这个问题的每个答案都是一种丢掉更新版本的方法。
+- **遗忘要活得比恢复久。** 光靠 `INSERT OR IGNORE` 挡不住：被退休的事实和被清空正文的 episode，在同一份库里带着同一个 id，但**在两台机器上独立记录时 id 不同**——那时恢复就是让人重新记起他请求删掉的东西，而且静默，因为那一行看起来就是普通历史。所以导入前先收集已退休的 `(subject, predicate, object)` 与已红删的 `message_id`，撞上的进 `refused` 计数并报出来；然后 `rebuildSearchIndex` 从源行重建 FTS，因为索引是分词器的缓存，而分词器允许改变。
+- **有些表不是数据。** `budget` 是这台机器今天的账，导入别处的开销不会给它更多额度，只会给它更少；`pending_recall` 是一句话的寿命，从备份恢复等于把记忆归给一个没人给过的回复；`relationship` 是派生视图，导入会让旧摘要覆盖新推导，所以重建而不是覆盖。
+
+`inspect` 存在的理由是它回答计数回答不了的那件事：被红删的 episode 导出时**正文是空的**——遗忘也是记录的一部分。
+
 ## 成本
 
 一条日常对话每天大约：抽取 2 次 × 6K in + 800 out，审计 1 次 × 3K in。约 **110K token/天**。用 `deepseek-flash` 级别的小模型跑，实际可以更低。
@@ -320,7 +341,7 @@ e2e 里对应的那条断言一开始写错了，值得记下来：它数的是�
 ## 开发
 
 ```bash
-npm test                   # 20 个断言套件，跑完列出去掉的 34 个文件和理由
+npm test                   # 22 个断言套件，跑完列出去掉的 35 个文件和理由
 npm run audit              # 表级 + 列级「只写不读」扫描
 ```
 
@@ -357,6 +378,9 @@ node test/consistency.mjs  # 单值谓词永远只有一条 live 行：三条写
 node test/dbstate.mjs      # 打印一个真实库的现状（不是断言，是观察用）
 node test/live.mjs         # 按 subject/predicate 列出库里全部事实，看它到底信什么
 node test/nameprobe.mjs    # 观察：name/nickname 的每一个版本（只列 live 行的 dump 看不出名字被覆盖过）
+node test/repair-name.mjs  # 程序：把陌生人覆盖掉的名字退休，默认干跑，--apply 才写
+node test/dump.mjs         # 导出/导入：往返不丢行、遗忘在恢复后仍然成立、旧版本文件被拒绝
+node test/commands.mjs     # /memory：状态、导出、检查、导入，以及房间里能不能调用它们
 node test/migrate.mjs      # 让一个库副本走完迁移路径并打印结果（升级前先跑这个）
 node test/tableaudit.mjs   # 哪张表只写不读（「机制存在但不起作用」的形状）
 node test/columnaudit.mjs  # 再细一层：哪一列只写不读（记得把 row.field 也算成读）
@@ -365,7 +389,7 @@ node test/leakprobe.mjs    # 某个库里还有没有「被删的原话留在活
 
 验证的层次，从下往上：
 
-1. **断言套件**（`npm test`，20 个）：机制自己转不转。
+1. **断言套件**（`npm test`，22 个）：机制自己转不转。
 2. **审计脚本**（`npm run audit` + 死导出扫描）：机制有没有接线。它们不测行为，测的是「有没有人读」。
 3. **真 agent 端到端**（`e2e-forget` / `e2e-tools`）：机制转起来有没有用。要一个一次性的 `DSH_HOME`，真的烧 token，断言的是库里的行而不是回复里的话——回复可能什么都没说，而库里已经对了或者已经错了。
 
@@ -442,7 +466,7 @@ foreach($f in Get-ChildItem lib\*.js){
 
 0.1.0，M0–M4 已实现（表结构、落盘、抽取、巩固、FSRS 召回、关联图、澄清、关系状态、agenda、遗忘）。M5 Web UI 未做。
 
-验证方式：`npm test` 20 个断言套件、`npm run audit` 两个审计脚本加一次死导出扫描、两个真 agent 端到端（`e2e-forget` 五轮、`e2e-tools` 四轮，各自跑在一次性的 DSH_HOME 上）。前两层能证明机制在转，第三层才回答「转起来有没有用」。
+验证方式：`npm test` 22 个断言套件、`npm run audit` 两个审计脚本加一次死导出扫描、两个真 agent 端到端（`e2e-forget` 五轮、`e2e-tools` 四轮，各自跑在一次性的 DSH_HOME 上）。前两层能证明机制在转，第三层才回答「转起来有没有用」。
 
 已知缺口：
 
