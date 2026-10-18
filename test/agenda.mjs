@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openDatabase, ensureSchema, relationshipRevision } from '../lib/db.js';
+import { openDatabase, ensureSchema } from '../lib/db.js';
 import {
   recordEpisode,
   ensureRelationship,
