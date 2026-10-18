@@ -101,6 +101,24 @@ check('an unrelated resolution does not close it', () => {
   assert.equal(loopResolvedBy('我最近在戒烟，已经两周了。', '稿子终于交了。'), false);
 });
 
+// The adverb is not what makes a completion: people say "我今天把稿子交了",
+// and an earlier version required "已经/终于" and so never closed the loop.
+check('a completion phrased without an adverb still closes its loop', () => {
+  assert.equal(loopResolvedBy('明天就要交稿了。', '我今天把稿子交了，出版社说下周给反馈。'), true);
+});
+
+check('a topic-bearing verb closes it without the subject being repeated', () => {
+  assert.equal(loopResolvedBy('我下周三要去医院复查，有点紧张。', '复查完了，没什么事。'), true);
+});
+
+// "好了" is the generic half of this list and attaches to anything. The loop
+// supplies "医院", the message supplies "买好了", and the two were joined into
+// a resolution of a hospital appointment that had not happened yet.
+check('a generic verb cannot borrow its subject from the loop', () => {
+  assert.equal(loopResolvedBy('我下周三要去医院复查，有点紧张。', '婚礼的礼物买好了。'), false);
+  assert.equal(loopResolvedBy('我最近在戒烟，已经两周了。', '晚饭好了。'), false);
+});
+
 console.log('rendering');
 check('empty agenda renders nothing', () => {
   assert.equal(renderAgenda(db, { now: Date.now() }), '');
