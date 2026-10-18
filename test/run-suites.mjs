@@ -60,6 +60,8 @@ const NOT_SUITES = new Map([
   ['repair-name.mjs', 'a procedure: retires the name a stranger overwrote, writes only with --apply'],
   ['real-command.mjs', 'observation: runs /memory against a real database and prints the answers'],
   ['snap.mjs', 'a procedure: writes a VACUUM INTO copy of a database'],
+  ['nickprobe.mjs', 'observation: prints every nickname row with its evidence, live and dead'],
+  ['subjectcrossprobe.mjs', 'observation: reproduces one subject displacing another through the FTS fallback'],
 ]);
 
 const files = readdirSync(here)

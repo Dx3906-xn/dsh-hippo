@@ -341,7 +341,7 @@ e2e 里对应的那条断言一开始写错了，值得记下来：它数的是�
 ## 开发
 
 ```bash
-npm test                   # 22 个断言套件，跑完列出去掉的 36 个文件和理由
+npm test                   # 22 个断言套件，跑完列出去掉的 38 个文件和理由
 npm run audit              # 表级 + 列级「只写不读」扫描
 ```
 
@@ -378,6 +378,8 @@ node test/consistency.mjs  # 单值谓词永远只有一条 live 行：三条写
 node test/dbstate.mjs      # 打印一个真实库的现状（不是断言，是观察用）
 node test/live.mjs         # 按 subject/predicate 列出库里全部事实，看它到底信什么
 node test/nameprobe.mjs    # 观察：name/nickname 的每一个版本（只列 live 行的 dump 看不出名字被覆盖过）
+node test/nickprobe.mjs    # 观察：昵称的每一行连同它的证据句子（看清是谁把谁的昵称顶掉了）
+node test/subjectcrossprobe.mjs # 观察：在主语的 FTS 回退里，一条 agent 的事实能不能退役一条 user 的事实
 node test/repair-name.mjs  # 程序：把陌生人覆盖掉的名字退休，默认干跑，--apply 才写
 node test/dump.mjs         # 导出/导入：往返不丢行、遗忘在恢复后仍然成立、旧版本文件被拒绝
 node test/commands.mjs     # /memory：状态、导出、检查、导入，以及房间里能不能调用它们
