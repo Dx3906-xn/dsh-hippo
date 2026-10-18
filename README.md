@@ -190,12 +190,17 @@ agenda 和召回是**两条独立的路**。曾经写成「没有召回就直接
 
 解法不是把原话改写成日期，而是**解一次，和原话并列存**。原话保持可引用，解出来的时刻保持正确：
 
-- `parseRelativeDate(text, now)` 认显式日历日、「明天/后天/大后天/昨天」、星期（**「下周三」从周一是 9 天后，不是 2 天后**——`下` 前缀加 7 天）、「下个月/月底/年底」、「过几天」。
+- `parseRelativeDate(text, now)` 中英两套词表，和 loop 的检测路径同一个原则：**两套同时生效，不按 `language` 挑**。认的写法：显式日历日（`10月21日` / `October 21` / `21 October`）、「明天/后天/大后天/昨天」与 `tomorrow` / `the day after tomorrow` / `yesterday`、星期（**「下周三」从周一是 9 天后，不是 2 天后**——`下` 和 `next` 都加 7 天，因为它们指的是**下一周的那一天**，不是下一个到达的那一天）、「下个月/月底/年底」与 `next week` / `this weekend` / `the end of the month` / `the end of the year`、「过几天」与 `in a few days` / `a fortnight` / `in two weeks`。
 - 没说钟点就落到**当天 23:59**。没有钟点的日期意思是「那天某个时候」，而适合追问的时刻是它的末尾：周三零点问「复查怎么样」只会得到「还没去」。
+- 钟点也分两种语言：`3pm` 和「下午三点」必须落到同一个时刻。只读中式的 `点`/`:` 会把下午的预约放进凌晨三点，而那是**看不出错**的一种错——时间是合法的，只是差十二小时。
 - `due_at`（事什么时候发生）和 `follow_after`（什么时候适合提）**是两列**。合并它们就是那个让复查当天晚上就来问的 bug。
 - 渲染时如果原话自己还带着日期（`namesItsOwnDay`），就不再补一句「指的是明天」——重复的括注会让模型学会跳过括注，包括那些真的带信息的。
 
-历史 loop 的 `due_at` 留空是有意的：从几周前的文字倒推日期会把预约放到错误的那一天。
+三处**故意不解析**，都是「猜错比不猜更贵」：
+
+- `10/21`：在美国是十月二十一日，在别处是十月……另一种十月二十一日。方向错的那一半会把追问放到一个从没被提起的日子上。
+- `for two weeks`：这是「已经持续了多久」，和中文的「已经两周了」一样。当成日期解出来，追问就落在过去，只能立刻触发。`three days ago` 反过来是**可以**解的：那是过去的一个时刻，`followUpAfter` 会把它压到下限，于是「手术是三天前做的」当天就能问。
+- 历史 loop 的 `due_at` 留空是有意的：从几周前的文字倒推日期会把预约放到错误的那一天。
 
 ## 中文检索
 
@@ -273,7 +278,7 @@ node test/identity.mjs     # 主语归一、他人事实、索引完整性
 node test/i18n.mjs         # 英文路径没有半截中文
 node test/scale.mjs        # 一年规模下的延迟，以及模糊提问真的返回行
 node test/profile.mjs      # 快照不自我矛盾：单值谓词只留一行，多值谓词有上限
-node test/when.mjs         # 话里的日期：下周三是几天后、没说钟点落到几点
+node test/when.mjs         # 话里的日期：下周三是几天后、3pm 不是凌晨三点、哪些说法必须拒绝
 node test/grading.mjs      # 回忆被复述/被纠正时，FSRS 收到的是哪一级
 node test/pending.mjs      # 待评分的回忆快照能跨进程存活，且读一次就消费掉
 node test/completion.mjs   # 完成态覆盖它完成的那条计划，且只覆盖那一条
@@ -297,7 +302,23 @@ node test/migrate.mjs      # 让一个库副本走完迁移路径并打印结果
 
 `agenda.mjs` 里那组英文用例盯的是一类**半边双语**的 bug：渲染路径是双语的（标题、日期、年龄、问法都有英文分支），检测路径却是纯中文的。这种不对称不会报错，也不会让任何一条已有断言变红——英文部署下 agenda 表永远是空的，而渲染器读得很正常。所以英文用例必须和中文用例并排放在同一个文件里，而不是塞进 `i18n.mjs` 的「英文路径没有半截中文」那类检查里：后者测的是文字，前者测的是**根本没有东西可渲染**。
 
-十七个测试文件加上三个观察脚本，覆盖的是「机制自己转不转」，覆盖不了「机制转起来有没有用」。后者只能看真实对话——比如 agenda 写好了但 `open_loops` 表一直是空的，是 `detectLoop` 太窄还是没人触发；这种问题 grep 导出的调用点比读代码快得多：
+单元测试证明不了「英文那一条真的走到了存储」，所以双语改动要在一份**独立的 DSH_HOME** 上再跑一遍真对话：复制一份 home，删掉 `hippo` 与 `sessions` 得到空库，profile 里的 `call` 指向本仓库。两个坑都踩过：
+
+- `Copy-Item -Recurse` 会把 junction **展开成真副本**。于是那份插件是复制那一刻的快照，之后改的代码在副本里完全不生效——现象是「loop 没开」，看起来像检测逻辑的 bug，其实是跑的旧代码。复制之后要把 `profiles\call\node_modules\dsh-hippo` 换成指回仓库的 junction（`cmd /c mklink /J`），之后每次改动即时生效。
+- 反过来，删这份 home 之前必须先 `cmd /c rmdir` 掉那个 junction：PowerShell 5.1 的 `Remove-Item -Recurse` 会顺着 junction 递归下去，删的是**仓库本体**。
+
+跑法（第一轮开 loop、第二轮问「我刚才在担心什么」看它读不读得到、第三轮说完成）：
+
+```powershell
+$env:DSH_HOME='D:\A\DSH-L\agent\home-en'
+$bin='D:\A\DSH-L\agent\node_modules\@deepseek-ai\dsh\lib\bin.js'
+node $bin --profile call "I have to hand the illustrations in next Wednesday and I am badly behind on them"
+node test\loops.mjs 'D:/A/DSH-L/agent/home-en/hippo/memory.db'
+```
+
+断言的是库里的行：`due=2026-10-21T15:59 (next Wednesday)`（周日说的「下周三」= 那天 23:59）和 `closed/resolution`。只看 agent 的回复会漏掉一半——它可能什么都没说。
+
+`test/` 下的文件还分两类：断言套件和观察脚本（`dbstate` / `live` / `loops` / `reflections` / `show-prompt` / `inspect-*` 等），后者不打断言、只打印，所以全量跑的时候要把它们排掉。这些文件加上观察脚本，覆盖的是「机制自己转不转」，覆盖不了「机制转起来有没有用」。后者只能看真实对话——比如 agenda 写好了但 `open_loops` 表一直是空的，是 `detectLoop` 太窄还是没人触发；这种问题 grep 导出的调用点比读代码快得多：
 
 ```powershell
 # 哪些导出函数零调用？（文档写了、测试绿了、但对运行的 agent 毫无影响）
@@ -331,7 +352,7 @@ foreach($f in Get-ChildItem lib\*.js){
 - 一个库一个 owner，多人场景留给部署层。
 - 关系状态只有熟悉度、信任、情绪基线三项，没有「近期互动模式」这种更细的东西。
 - 他人事实只有一层（「妈妈 health」），没有真正的社交图谱：谁是朋友、谁和谁有关系、某个话题该不该在某个在场者面前提。
-- 相对时间只覆盖中文的常见说法（「下周三」「月底」「过几天」）。「过年之前」「发了工资以后」这类事件锚点没有解析，英文的「next Tuesday」「in a fortnight」也没有——loop 的**开启与关闭**已经是双语的，日期的**解析**还不是。
+- 相对时间解析的是**说出口的**日期，不是**事件**锚点：「过年之前」「发了工资以后」「等结果出来」这类没有解析，英文的 `before the holidays` 同理。loop 的开启、关闭、渲染都已经是双语的，日期解析也是了，剩下的是这类没有日历坐标的说法。
 - 情绪词表、话题扩展、抽取提示词都以中文为主；英文能跑通 loop 与渲染，但抽取质量没有在英文对话上验证过。
 
 ## License

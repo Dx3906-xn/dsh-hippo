@@ -150,6 +150,92 @@ check('a calendar date already past rolls to next year', () => {
   assert.equal(new Date(when.at).getFullYear(), 2027);
 });
 
+// ---- English dates ------------------------------------------------------
+//
+// The companion speaks whatever the deployment speaks, and the date parser is
+// reached from the loop detector in both languages, so the English half is not
+// a nicety: without it an English deployment stores loops with no deadline at
+// all and asks about the appointment six hours later.
+
+check('tomorrow is one day out', () => {
+  assert.equal(daysFromMonday(parseRelativeDate('dentist tomorrow', MONDAY).at), 1);
+});
+
+check('the day after tomorrow beats the tomorrow inside it', () => {
+  // Same trap as 大后天/后天: the longer phrase contains the shorter one, and
+  // taking the inner match puts the follow-up a day early.
+  const when = parseRelativeDate('the day after tomorrow I fly out', MONDAY);
+  assert.equal(daysFromMonday(when.at), 2);
+  assert.equal(when.phrase.toLowerCase(), 'the day after tomorrow');
+});
+
+check('next Tuesday is next week, not the coming one', () => {
+  assert.equal(daysFromMonday(parseRelativeDate('next Tuesday I have a scan', MONDAY).at), 8);
+});
+
+check('this Friday is this week', () => {
+  assert.equal(daysFromMonday(parseRelativeDate('this Friday is the interview', MONDAY).at), 4);
+});
+
+check('a bare weekday that has not passed means today', () => {
+  const when = parseRelativeDate('on Monday the results come out', MONDAY);
+  assert.equal(daysFromMonday(when.at), 0);
+});
+
+check('last Monday went the other way', () => {
+  assert.equal(daysFromMonday(parseRelativeDate('last Monday it started', MONDAY).at), -7);
+});
+
+check('next week lands on Monday', () => {
+  assert.equal(daysFromMonday(parseRelativeDate('I hand the draft in next week', MONDAY).at), 7);
+});
+
+check('this weekend lands on Saturday', () => {
+  assert.equal(daysFromMonday(parseRelativeDate('this weekend the wedding is', MONDAY).at), 5);
+});
+
+check('the end of the month is the last day of it', () => {
+  const date = new Date(parseRelativeDate('settle it by the end of the month', MONDAY).at);
+  assert.equal(date.getMonth(), 9);
+  assert.equal(date.getDate(), 31);
+});
+
+check('a month name on either side of the day', () => {
+  assert.equal(daysFromMonday(parseRelativeDate('the review is October 21', MONDAY).at), 2);
+  assert.equal(daysFromMonday(parseRelativeDate('the review is 21 October', MONDAY).at), 2);
+});
+
+check('English spans', () => {
+  assert.equal(daysFromMonday(parseRelativeDate('in a few days I will know', MONDAY).at), 3);
+  assert.equal(daysFromMonday(parseRelativeDate('it clears up in two weeks', MONDAY).at), 14);
+  assert.equal(daysFromMonday(parseRelativeDate('in a fortnight', MONDAY).at), 14);
+});
+
+check('3pm is afternoon, not three in the morning', () => {
+  const when = parseRelativeDate('tomorrow at 3pm the scan is', MONDAY);
+  const date = new Date(when.at);
+  assert.equal(date.getDate(), 20);
+  assert.equal(date.getHours(), 15);
+});
+
+check('an English day part picks a plausible hour', () => {
+  assert.equal(new Date(parseRelativeDate('tomorrow morning I go in', MONDAY).at).getHours(), 9);
+  assert.equal(new Date(parseRelativeDate('tonight I have to finish it', MONDAY).at).getHours(), 20);
+});
+
+check('a duration with "for" is not a date', () => {
+  // "for two weeks" is how long something has held, exactly like 已经两周了.
+  assert.equal(parseRelativeDate('I have been sleeping badly for two weeks', MONDAY), null);
+});
+
+check('"ago" is a date in the past, not three days ahead', () => {
+  assert.equal(daysFromMonday(parseRelativeDate('the scan was three days ago', MONDAY).at), -3);
+});
+
+check('English text with no date returns null', () => {
+  assert.equal(parseRelativeDate('I finally quit and I feel better', MONDAY), null);
+});
+
 // ---- refusal ------------------------------------------------------------
 
 check('a sentence with no date returns null', () => {

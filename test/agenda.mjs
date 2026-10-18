@@ -64,6 +64,23 @@ check('a deadline is a loop', () => {
   assert.notEqual(loop, null);
 });
 
+check('a deadline without an obligation word is still a deadline', () => {
+  // 「我下周交稿」 carries no 要/得 — which is exactly how it reads when the date
+  // is already settled. The 要/得 requirement used to drop it, and a dropped
+  // deadline is invisible: nothing fails, the agenda is just shorter.
+  assert.notEqual(detectLoop('我下周交稿，还差三张。'), null);
+});
+
+check('short statements are read, not skipped for being short', () => {
+  // The length floor exists to keep two-character replies out of the patterns,
+  // not to filter real ones. 「月底搬家」 is four characters and a plan.
+  assert.notEqual(detectLoop('月底搬家'), null);
+});
+
+check('a date followed by a remark is not a plan', () => {
+  assert.equal(detectLoop('下周天气不错，出去走走。'), null);
+});
+
 check('a feeling is a loop, but raised later than a task', () => {
   const loop = detectLoop('这两天有点慌，睡不着。');
   assert.notEqual(loop, null);
@@ -135,6 +152,25 @@ check('english loops are opened', () => {
 check('english small talk is still not a loop', () => {
   assert.equal(detectLoop('I had a nice walk today, the weather was lovely.'), null);
   assert.equal(detectLoop('How are you doing?'), null);
+});
+
+check('an english deadline knows its weekdays', () => {
+  // The date vocabulary has to be the same on both sides of the verb, because
+  // English puts the deadline on either one. Listing `next week` and
+  // `next month` but not `next Wednesday` opened nothing for a sentence with a
+  // deadline, an obligation and a date in it — and nothing failed, because
+  // "no loop" is the absence of a row, not an error.
+  assert.equal(detectLoop('I have to hand the illustrations in next Wednesday.')?.why, '有期限的事');
+  assert.equal(detectLoop('Next Wednesday I have to hand them in.')?.why, '有期限的事');
+  assert.equal(detectLoop('I have a deadline next Wednesday.')?.why, '有期限的事');
+});
+
+check('a scary film is not a feeling about the person', () => {
+  // The mood pattern is the loosest of the set. It takes the intensifier, so
+  // "I'm really nervous" is caught and "the film was really scary" is not —
+  // which only works as long as the adjective list stays a list of feelings
+  // someone has, not a list of things something can be.
+  assert.equal(detectLoop('The film was really scary.'), null);
 });
 
 check('an english resolution closes the loop it is about', () => {

@@ -23,6 +23,6 @@ for (const row of rows) {
   console.log(`  cites ${cited.episodes ?? 0} episode(s), ${cited.facts ?? 0} fact(s)`);
 }
 
-const concepts = db.prepare('SELECT concept, count(*) n FROM reflections GROUP BY concept').all();
-console.log('\n== by concept ==');
-for (const row of concepts) console.log(`  ${row.concept}  ${row.n}`);
+const concepts = db.prepare('SELECT kind, count(*) n FROM reflections GROUP BY kind').all();
+console.log('\n== by kind ==');
+for (const row of concepts) console.log(`  ${row.kind}  ${row.n}`);
