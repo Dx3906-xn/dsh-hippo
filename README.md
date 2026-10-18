@@ -356,6 +356,7 @@ node test/wiring.mjs       # 真插件 + 假 Cordis context，走一遍完整对
 node test/consistency.mjs  # 单值谓词永远只有一条 live 行：三条写路径都得退役旧的
 node test/dbstate.mjs      # 打印一个真实库的现状（不是断言，是观察用）
 node test/live.mjs         # 按 subject/predicate 列出库里全部事实，看它到底信什么
+node test/nameprobe.mjs    # 观察：name/nickname 的每一个版本（只列 live 行的 dump 看不出名字被覆盖过）
 node test/migrate.mjs      # 让一个库副本走完迁移路径并打印结果（升级前先跑这个）
 node test/tableaudit.mjs   # 哪张表只写不读（「机制存在但不起作用」的形状）
 node test/columnaudit.mjs  # 再细一层：哪一列只写不读（记得把 row.field 也算成读）
