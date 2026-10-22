@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import { ensureSchema, SCHEMA_VERSION } from '../lib/db.js';
 import { addFact, addOpenLoop, liveFacts, openLoops, recordEpisode } from '../lib/store.js';
 import { renderResident, describeSelf, SELF_SUBJECT } from '../lib/prompt.js';
+import { parseFacts } from '../lib/extract.js';
 
 let failures = 0;
 function check(ok, label) {
@@ -210,6 +211,46 @@ const OWNER = 'user';
 }
 
 rmSync(dir, { recursive: true, force: true });
+
+// ---- evidence: a belief has to point at something ---------------------------
+//
+// The failure this covers is not hypothetical: "反正我也没打算去那边上班" was said in
+// reply to a question, filed as her standing plan, and then rendered back to her as
+// "this is who you are". Two defects made that possible.
+//
+// The first was an off-by-one-level read — `batch[index].id` where the batch holds
+// `{episode, text}` pairs — so every fact ever extracted got `evidence: []`. The
+// table that exists to answer "why do you believe this" was written by nobody.
+//
+// The second was that nothing required a claim about *her* to come from *her* line.
+{
+  console.log('a belief has to point at something');
+  const batch = [
+    { episode: { id: 'e-user', actor: 'user' }, text: '你以后还去那边上班吗' },
+    { episode: { id: 'e-agent', actor: 'agent' }, text: '反正我也没打算去那边上班 我就在这待着' },
+  ];
+  const extract = (fact) => parseFacts(JSON.stringify({ facts: [fact] }), batch);
+
+  const hers = extract({ subject: 'agent', predicate: 'self_plan', object: '在这待着', confidence: 0.8, episode: 1 });
+  check(hers.length === 1, 'a self-claim citing her own line is accepted');
+  check(hers[0]?.evidence?.[0] === 'e-agent', `and carries that line as evidence (${JSON.stringify(hers[0]?.evidence)})`);
+
+  // The exact shape of the original bug: the model attributes a self-plan but
+  // points at the person's question.
+  const borrowed = extract({ subject: 'agent', predicate: 'self_plan', object: '去上班', confidence: 0.9, episode: 0 });
+  check(borrowed.length === 0, "a self-claim citing the person's line is refused");
+
+  // No citation at all falls back to the first episode, which is the person's, so
+  // the same check refuses it. A self-claim that points at nothing is a belief
+  // with no evidence.
+  const unfounded = extract({ subject: 'agent', predicate: 'self_image', object: '懒', confidence: 0.9 });
+  check(unfounded.length === 0, 'a self-claim with no citation is refused');
+
+  // Everything about the person still works, and now records evidence.
+  const aboutThem = extract({ subject: 'user', predicate: 'likes', object: '猫', confidence: 0.9, episode: 0 });
+  check(aboutThem.length === 1, 'a fact about the person is unaffected');
+  check(aboutThem[0]?.evidence?.[0] === 'e-user', `and records where it came from (${JSON.stringify(aboutThem[0]?.evidence)})`);
+}
 
 if (failures > 0) {
   console.log(`\n${failures} check(s) failed`);
