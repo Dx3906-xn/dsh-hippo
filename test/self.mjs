@@ -210,8 +210,6 @@ const OWNER = 'user';
   db.close();
 }
 
-rmSync(dir, { recursive: true, force: true });
-
 // ---- evidence: a belief has to point at something ---------------------------
 //
 // The failure this covers is not hypothetical: "反正我也没打算去那边上班" was said in
@@ -251,6 +249,40 @@ rmSync(dir, { recursive: true, force: true });
   check(aboutThem.length === 1, 'a fact about the person is unaffected');
   check(aboutThem[0]?.evidence?.[0] === 'e-user', `and records where it came from (${JSON.stringify(aboutThem[0]?.evidence)})`);
 }
+
+// ---- the block reports what it could not fit ---------------------------------
+//
+// Every resident block hits this and every one of them gets it wrong the same way:
+// the budget cuts the list, and a fact simply stops appearing — indistinguishable,
+// from inside the prompt, from something she never knew. A footer makes it visible.
+//
+// The count has to mean "the block is full". Counting every fact that was folded
+// into a duplicate or dropped past a multi-value cap would make it permanent noise,
+// and a footer that is always there is one nobody reads.
+{
+  console.log('the block reports what it could not fit');
+  const db = new DatabaseSync(join(dir, 'budget.db'));
+  ensureSchema(db);
+  const predicates = ['likes', 'dislikes', 'goal', 'plan', 'habit', 'health', 'dietary', 'personality', 'language', 'contact', 'lives_in', 'works_as'];
+  for (let i = 0; i < 40; i += 1) {
+    addFact(db, { subject: OWNER, predicate: predicates[i % predicates.length], object: `值${i}号${'很长的描述内容'.repeat(4)}` });
+  }
+
+  const tight = renderResident(db, { userId: OWNER, language: 'zh', maxTokens: 120 });
+  check(/还有 \d+ 条没放进这里/.test(tight), 'a full block says how many facts it left out');
+
+  const roomy = renderResident(db, { userId: OWNER, language: 'zh', maxTokens: 20000 });
+  check(!roomy.includes('没放进这里'), 'a block with room says nothing about omissions');
+
+  // A smaller budget must leave more out, so the number is a real count rather than
+  // a flag that happens to be set.
+  const looser = renderResident(db, { userId: OWNER, language: 'zh', maxTokens: 400 });
+  const countIn = (block) => Number(/还有 (\d+) 条/.exec(block)?.[1] ?? 0);
+  check(countIn(tight) >= countIn(looser), `a tighter budget omits at least as many (${countIn(tight)} vs ${countIn(looser)})`);
+  db.close();
+}
+
+rmSync(dir, { recursive: true, force: true });
 
 if (failures > 0) {
   console.log(`\n${failures} check(s) failed`);
