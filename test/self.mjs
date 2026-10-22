@@ -168,6 +168,32 @@ const OWNER = 'user';
   db.close();
 }
 
+// ---- her own vocabulary -----------------------------------------------------
+{
+  console.log('her attributes use her words, not his');
+  const db = new DatabaseSync(join(dir, 'vocab.db'));
+  ensureSchema(db);
+  addFact(db, { subject: SELF_SUBJECT, predicate: 'self_habit', object: '刷B站' });
+  addFact(db, { subject: SELF_SUBJECT, predicate: 'self_plan', object: '没打算去那边上班' });
+  addFact(db, { subject: SELF_SUBJECT, predicate: 'self_habit', object: '趴着' });
+  const block = renderResident(db, { userId: OWNER, language: 'zh' });
+  check(block.includes('我习惯刷B站'), 'a habit reads as hers, in first person');
+  check(!block.includes('习惯：'), 'and not as a labelled field');
+  check(block.includes('没打算去那边上班'), 'a plan is stated as she stated it');
+
+  // Two habits are two habits. The one-per-predicate rule kept whichever sorted
+  // first, which lost half of what she does with her time.
+  check(block.includes('我习惯趴着') && block.includes('我习惯刷B站'), 'several habits all appear');
+
+  // Rows written before her vocabulary existed carry the person's key. They are
+  // hers and must read the same as new ones — otherwise the section looks like
+  // two different people.
+  addFact(db, { subject: SELF_SUBJECT, predicate: 'habit', object: '发呆' });
+  const legacy = renderResident(db, { userId: OWNER, language: 'zh' });
+  check(legacy.includes('我习惯发呆'), 'a row under the old key renders in her voice too');
+  db.close();
+}
+
 // ---- loops under her own subject --------------------------------------------
 {
   console.log('her own open loops are readable');
