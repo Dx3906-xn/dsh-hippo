@@ -56,6 +56,8 @@ const disposers = [];
 let settled = null;
 
 const commands = [];
+/** Services the plugin published, by name. */
+const provided = new Map();
 const ctx = {
   llm,
   systemPrompt: {
@@ -90,6 +92,15 @@ const ctx = {
     const dispose = setup();
     if (typeof dispose === 'function') disposers.push(dispose);
     return dispose;
+  },
+  // Cordis installs a service as a method on the context. `provide` records the
+  // name so this harness can assert the plugin actually published one — a plugin
+  // that only *reads* services is untestable from the outside, and the absence of
+  // this stub is what let `ctx.get('hippo')` return undefined in production for
+  // as long as it did.
+  provide(name, value) {
+    provided.set(name, value);
+    return () => provided.delete(name);
   },
 };
 
@@ -141,6 +152,43 @@ const refused = await commands[0].handler({
   agent: { session: { header: { id: 'qq:onebot:group:1070071261' } } },
 });
 check(refused?.kind === 'error', `a room was refused dump (got ${JSON.stringify(refused)})`);
+
+// ---- the service other plugins call ----------------------------------------
+//
+// This is not cosmetic. `dsh-proactive` has always asked `ctx.get('hippo')` for
+// open loops, and the plugin never published anything under that name — so the
+// open-loop half of its material sourcing silently did nothing, and the failure
+// was invisible because "no service here" and "no loops here" look identical from
+// the caller's side.
+console.log('service face');
+const memory = provided.get('hippo');
+check(memory !== undefined, 'hippo publishes a service other plugins can call');
+if (memory !== undefined) {
+  check(typeof memory.openLoops === 'function', 'it can list open loops');
+  check(typeof memory.recordSelf === 'function', 'it can record what she did on her own time');
+  check(typeof memory.selfFacts === 'function', 'it can report what she remembers about herself');
+  check(typeof memory.status === 'function', 'it can describe the store');
+
+  // Her own time is a third voice, and the distinction has to survive a write.
+  const selfWrite = memory.recordSelf({ sessionId: 'hb:companion', text: '翻了一下午搁浅的鲸鱼' });
+  check(selfWrite.stored === true, 'an act of her own is stored');
+  const status = memory.status();
+  check(status.selfEpisodes >= 1, `and is counted as hers (${status.selfEpisodes})`);
+
+  // Empty input must not become an empty episode: a blank row would later read
+  // as "she woke up and did nothing" when the truth is that nothing was recorded.
+  check(memory.recordSelf({ sessionId: 'hb:companion', text: '   ' }).stored === false, 'a blank act is refused');
+  check(memory.recordSelf({ sessionId: '', text: 'x' }).stored === false, 'an act with no session is refused');
+
+  // Loops default to the person, because every existing caller predates the
+  // agent's own list and must keep getting what it used to get.
+  const ownerLoops = memory.openLoops();
+  check(Array.isArray(ownerLoops), 'loops default to a list');
+  check(
+    memory.openLoops({ subject: 'agent' }).every((row) => String(row.user_id) === 'agent'),
+    'and hers can be asked for',
+  );
+}
 
 // Every registered tool must carry a schema the runtime can render.
 console.log('tool schemas');
