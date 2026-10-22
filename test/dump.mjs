@@ -79,7 +79,7 @@ const dump = exportMemory(source, { now });
 
 assert.equal(dump.format, DUMP_FORMAT);
 assert.equal(dump.version, 1);
-assert.equal(dump.schemaVersion, 16, 'the dump recorded a schema version that is not this build\'s');
+assert.equal(dump.schemaVersion, 17, 'the dump recorded a schema version that is not this build\'s');
 assert.equal(dump.tables.episodes.length, 2);
 assert.equal(dump.tables.facts.length, 3);
 assert.equal(dump.tables.open_loops.length, 1);
@@ -137,14 +137,19 @@ assert.equal(
   'another machine\'s daily ledger was imported',
 );
 assert.deepEqual(
-  takePendingRecall(target, OWNER),
+  takePendingRecall(target, OWNER, now),
   [],
   'a recall snapshot from another process was restored',
 );
 // Non-vacuous companion: the same call on the source store does find the snapshot.
 // Without it this assertion would also pass against a `takePendingRecall` that
 // simply always answered empty.
-assert.equal(takePendingRecall(source, OWNER).length, 1, 'the source store had no snapshot to begin with');
+//
+// `now` is passed explicitly. The fixture seeds its rows at a fixed timestamp in
+// the past, and `takePendingRecall` expires anything older than half an hour — so
+// called with the real clock, the source store had already swept its own snapshot
+// and this assertion failed while the importer was behaving correctly.
+assert.equal(takePendingRecall(source, OWNER, now).length, 1, 'the source store had no snapshot to begin with');
 // `relationship` is rebuilt by the importer's own machinery, never overwritten,
 // so a fresh store has the row `ensureRelationship` would create and nothing more.
 const relationship = target.prepare('SELECT * FROM relationship WHERE user_id = ?').get(OWNER);
