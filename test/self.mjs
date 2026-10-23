@@ -372,6 +372,27 @@ const OWNER = 'user';
   db.close();
 }
 
+// ---- an amendment is not said twice -----------------------------------------
+//
+// The extractor reads her utterances like anybody else's, which is right. But a
+// sentence she wrote with `self_write` also became a `self_image` fact, so one thought
+// appeared twice in one prompt: once in her words under 「你自己改过的」, once below it
+// reworded by the extraction pass. Two versions of one thought read as two thoughts.
+{
+  console.log('an amendment is not said twice');
+  const db = new DatabaseSync(join(dir, 'dup-amend.db'));
+  ensureSchema(db);
+  addPersonaEdit(db, { section: '脾气', text: '我可以不讨好任何人，也照样留在这里 这两件事不冲突' });
+  // The extractor's shorter, reworded version of the same sentence.
+  addFact(db, { subject: SELF_SUBJECT, predicate: 'self_image', object: '可以不讨好任何人，也照样留在这', confidence: 0.8 });
+
+  const block = renderResident(db, { userId: OWNER, language: 'zh' });
+  const stated = block.split('\n').filter((line) => line.includes('不讨好任何人'));
+  check(stated.length === 1, `the thought appears once, not twice (${stated.length})`);
+  check(stated[0]?.includes('这两件事不冲突'), 'and the version that survives is hers, not the extractor\'s');
+  db.close();
+}
+
 rmSync(dir, { recursive: true, force: true });
 
 if (failures > 0) {
