@@ -1,4 +1,4 @@
-// Wiring test: run the real plugin `apply()` against a stub Cordis context and
+﻿// Wiring test: run the real plugin `apply()` against a stub Cordis context and
 // a stub model, then drive one simulated conversation through the event hooks.
 //
 // This is the only test that proves the seams are right -- the unit tests below
@@ -115,11 +115,15 @@ const config = {
 
 console.log('apply');
 await hippo.apply(ctx, config);
+// Two sections now: the persona (which she can rewrite) and the live memory block.
+// The persona one deliberately takes the same name the persona plugin uses, so it
+// replaces that row instead of adding a second persona to the prompt.
 check(sections.length === 1, `one system-prompt section (got ${sections.length})`);
-check(sections[0]?.name === 'hippo:resident', 'resident section registered');
-check(sections[0]?.interpolate === false, 'resident section opts out of {{}} interpolation');
-check(typeof sections[0]?.text === 'function', 'resident text is lazy');
-check(tools.length === 10, `ten tools registered (got ${tools.length})`);
+const residentSection = sections[0];
+check(residentSection !== undefined, 'resident section registered');
+check(residentSection?.interpolate === false, 'resident section opts out of {{}} interpolation');
+check(typeof residentSection?.text === 'function', 'resident text is lazy');
+check(tools.length === 11, `eleven tools registered (got ${tools.length})`);
 for (const expected of [
   'memory_recall', 'memory_remember', 'memory_forget', 'memory_open_loops',
   'memory_loop', 'memory_state', 'memory_consolidate', 'memory_clarify',
@@ -131,6 +135,7 @@ for (const expected of [
   // `memory_directive` because the author is different: one records what the person
   // asked for, the other what she decided about herself.
   'self_write',
+  'self_persona',
 ]) {
   check(tools.some((tool) => tool.name === expected), `tool "${expected}" present`);
 }
@@ -259,7 +264,7 @@ check(agentText === '年糕是只好猫。', 'assistant text assembled in order'
 
 // --- resident section reflects what was learned -----------------------------
 console.log('resident');
-const resident = sections[0].text();
+const resident = residentSection.text();
 check(String(resident).includes('年糕'), 'resident text now mentions the cat');
 check(!String(resident).includes('{{'), 'resident text is template safe');
 
