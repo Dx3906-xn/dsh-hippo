@@ -354,8 +354,17 @@ if (loopIds.length >= 1) {
   check(closed.ok === true, 'memory_loop closes the loop id memory_open_loops printed');
 }
 
-const anyFact = db.prepare('SELECT id FROM facts LIMIT 1').get();
-db.prepare('UPDATE facts SET needs_clarification = 1 WHERE id = ?').run(String(anyFact.id));
+// A live row, because a retired one cannot be clarified and the tool says so.
+//
+// The assertions above retire every fact the fixture built — that is what they are
+// testing — so by this point there may be nothing live left to flag. Creating one is
+// not padding the test: a clarification by definition only applies to a fact that is
+// still believed, and after the fix a flag on a retired row is no longer listed.
+db.prepare(`
+  INSERT INTO facts (id, subject, predicate, object, confidence, valid_at, sensitivity,
+                     source, needs_clarification, pinned, cost_tokens, created_at, updated_at)
+  VALUES ('c1a2f3d4-0000-4000-8000-000000000001', 'user', 'works_as', '画画的', 0.8, ?, 'personal', 'inferred', 1, 0, 0, ?, ?)
+`).run(Date.now(), Date.now(), Date.now());
 const stateText = printed(stateTool, await stateTool.execute({}, exec('memory_state')));
 const clarifyIds = idsIn(stateText);
 check(clarifyIds.length >= 1, 'memory_state prints the contradiction id');
