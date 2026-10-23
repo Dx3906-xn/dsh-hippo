@@ -1,4 +1,4 @@
-﻿// Wiring test: run the real plugin `apply()` against a stub Cordis context and
+// Wiring test: run the real plugin `apply()` against a stub Cordis context and
 // a stub model, then drive one simulated conversation through the event hooks.
 //
 // This is the only test that proves the seams are right -- the unit tests below
@@ -267,6 +267,46 @@ console.log('resident');
 const resident = residentSection.text();
 check(String(resident).includes('年糕'), 'resident text now mentions the cat');
 check(!String(resident).includes('{{'), 'resident text is template safe');
+
+// --- the persona she can rewrite replaces the one the profile injected ------
+//
+// The text lives in the store, so the section carrying it has to be rewritten at
+// assembly rather than registered at mount: the persona plugin already owns that
+// section name, and a second global registration is rejected outright. Asserting
+// through the hook is the only way to see the swap happen at all.
+const assemble = handlers.get('system-prompt/assemble')?.[0];
+check(typeof assemble === 'function', 'an assembly hook rewrites the persona');
+if (typeof assemble === 'function') {
+  // The fixture does not seed a persona, so nothing would be swapped in yet — the
+  // empty-text case is the no-op, and it is asserted below.
+  const untouched = await assemble(
+    {},
+    undefined,
+    async () => ({ sections: [{ name: 'deployment:persona-prefix', text: '原来的' }] }),
+  );
+  check(untouched.sections[0].text === '原来的', 'with no stored persona the profile text is left alone');
+
+  // Once there is one, it wins.
+  db.prepare("INSERT INTO persona_base (id, text, revision, updated_at) VALUES ('base', ?, 1, ?)")
+    .run('你是大肥鱼，写在库里。', Date.now());
+  const swapped = await assemble(
+    {},
+    undefined,
+    async () => ({
+      sections: [
+        { name: 'deployment:persona-prefix', text: '原来的' },
+        { name: 'hippo:resident', text: 'x' },
+      ],
+    }),
+  );
+  check(String(swapped.sections[0].text).includes('大肥鱼'), 'the stored persona replaces what the profile injected');
+  check(swapped.sections[1].text === 'x', 'and other sections are left alone');
+
+  // A deployment with no persona plugin at all still gets her text, rather than
+  // silently rendering nothing.
+  const empty = await assemble({}, undefined, async () => ({ sections: [] }));
+  check(empty.sections.length === 1, `a persona is added when nothing registered the slot (${empty.sections.length})`);
+}
 
 // --- a later turn recalls it ------------------------------------------------
 console.log('recall');
