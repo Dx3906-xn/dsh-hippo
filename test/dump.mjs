@@ -1,4 +1,4 @@
-/**
+﻿/**
  * A memory that can leave the machine.
  *
  * Two failures matter here and they are both silent. The first is an export that
@@ -79,7 +79,7 @@ const dump = exportMemory(source, { now });
 
 assert.equal(dump.format, DUMP_FORMAT);
 assert.equal(dump.version, 1);
-assert.equal(dump.schemaVersion, 19, 'the dump recorded a schema version that is not this build\'s');
+assert.equal(dump.schemaVersion, 20, 'the dump recorded a schema version that is not this build\'s');
 assert.equal(dump.tables.episodes.length, 2);
 assert.equal(dump.tables.facts.length, 3);
 assert.equal(dump.tables.open_loops.length, 1);

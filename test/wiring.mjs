@@ -119,7 +119,7 @@ check(sections.length === 1, `one system-prompt section (got ${sections.length})
 check(sections[0]?.name === 'hippo:resident', 'resident section registered');
 check(sections[0]?.interpolate === false, 'resident section opts out of {{}} interpolation');
 check(typeof sections[0]?.text === 'function', 'resident text is lazy');
-check(tools.length === 9, `nine tools registered (got ${tools.length})`);
+check(tools.length === 10, `ten tools registered (got ${tools.length})`);
 for (const expected of [
   'memory_recall', 'memory_remember', 'memory_forget', 'memory_open_loops',
   'memory_loop', 'memory_state', 'memory_consolidate', 'memory_clarify',
@@ -127,6 +127,10 @@ for (const expected of [
   // `memory_remember`: they are not a fact about the person, they are repeated at
   // the top of every prompt, and they supersede each other by topic.
   'memory_directive',
+  // Her own amendments to the persona she was written with. Separate from
+  // `memory_directive` because the author is different: one records what the person
+  // asked for, the other what she decided about herself.
+  'self_write',
 ]) {
   check(tools.some((tool) => tool.name === expected), `tool "${expected}" present`);
 }

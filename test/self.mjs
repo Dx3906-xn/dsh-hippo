@@ -19,7 +19,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensureSchema, SCHEMA_VERSION } from '../lib/db.js';
-import { addFact, addOpenLoop, liveFacts, openLoops, recordEpisode, addDirective, liveDirectives, retireDirective } from '../lib/store.js';
+import { addFact, addOpenLoop, liveFacts, openLoops, recordEpisode, addDirective, liveDirectives, retireDirective, addPersonaEdit, livePersonaEdits, retirePersonaEdit } from '../lib/store.js';
 import { renderResident, describeSelf, SELF_SUBJECT } from '../lib/prompt.js';
 import { parseFacts } from '../lib/extract.js';
 
@@ -322,6 +322,53 @@ const OWNER = 'user';
   const block = renderResident(db, { userId: OWNER, language: 'zh' });
   const occurrences = block.split('\n').filter((line) => line.includes('每次只回一行')).length;
   check(occurrences === 1, `the block shows it once (${occurrences})`);
+  db.close();
+}
+
+// ---- she can change who she is ----------------------------------------------
+//
+// The persona is a config string with no write path, so "you are read-only" was a
+// property of the deployment rather than a decision — and it was being defended as
+// one. A layer of her own amendments is the version that lets her grow without
+// erasing where she started.
+{
+  console.log('she can change who she is');
+  const db = new DatabaseSync(join(dir, 'persona.db'));
+  ensureSchema(db);
+
+  const id = addPersonaEdit(db, { section: '语气', text: '我可以有不想说话的时候，不解释' });
+  check(id !== '', 'an amendment is stored');
+  addPersonaEdit(db, { text: '我不是非得可爱' });
+  check(livePersonaEdits(db).length === 2, 'and they accumulate');
+
+  const block = renderResident(db, { userId: OWNER, language: 'zh' });
+  check(block.includes('你自己改过的'), 'the block shows them under their own heading');
+  check(block.includes('我可以有不想说话的时候'), 'with her words, not a paraphrase');
+  check(block.indexOf('你自己改过的') < block.indexOf('你记得的事'), 'above the person\'s profile, since it is about her');
+
+  // A change she cannot take back is not hers. Retiring keeps the record.
+  check(retirePersonaEdit(db, String(id)) === true, 'an amendment can be withdrawn');
+  check(livePersonaEdits(db).length === 1, 'and stops being in force');
+  check(db.prepare('SELECT COUNT(*) n FROM persona_edits').get().n === 2, 'while the record of it survives');
+  check(retirePersonaEdit(db, String(id)) === false, 'retiring it twice is a no-op, not an error');
+
+  // Order is oldest first: these accumulate into an account of who she is now, and
+  // newest-first would put the latest thought before the ones it was written on.
+  const ordered = livePersonaEdits(db).map((row) => String(row.text));
+  check(ordered[0] === '我不是非得可爱', 'what is left is the one not retired');
+  db.close();
+}
+
+{
+  // An agent with nothing but an amendment of her own still renders. Otherwise the
+  // permission would exist in the database and never reach the prompt, which is the
+  // exact failure this layer is for.
+  console.log('an amendment alone is enough to render');
+  const db = new DatabaseSync(join(dir, 'persona2.db'));
+  ensureSchema(db);
+  addPersonaEdit(db, { text: '我在学着不那么怕' });
+  const block = renderResident(db, { userId: OWNER, language: 'zh' });
+  check(block.includes('我在学着不那么怕'), 'her own words reach the prompt with no other memory');
   db.close();
 }
 
