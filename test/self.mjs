@@ -19,7 +19,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensureSchema, SCHEMA_VERSION } from '../lib/db.js';
-import { addFact, addOpenLoop, liveFacts, openLoops, recordEpisode } from '../lib/store.js';
+import { addFact, addOpenLoop, liveFacts, openLoops, recordEpisode, addDirective, liveDirectives, retireDirective } from '../lib/store.js';
 import { renderResident, describeSelf, SELF_SUBJECT } from '../lib/prompt.js';
 import { parseFacts } from '../lib/extract.js';
 
@@ -279,6 +279,49 @@ const OWNER = 'user';
   const looser = renderResident(db, { userId: OWNER, language: 'zh', maxTokens: 400 });
   const countIn = (block) => Number(/还有 (\d+) 条/.exec(block)?.[1] ?? 0);
   check(countIn(tight) >= countIn(looser), `a tighter budget omits at least as many (${countIn(tight)} vs ${countIn(looser)})`);
+  db.close();
+}
+
+// ---- directives: one topic, one live line -----------------------------------
+//
+// Reported from the outside as "她一会儿说叫老大，一会儿又说不叫" — the block was
+// rendering the same instruction twice, so she read one rule as two rules fighting.
+// The cause was in the write path: a repeated instruction `continue`d instead of
+// retiring, so the old row stayed live *and* a second row was inserted. Two live rows
+// on one topic is the one state the topic key exists to prevent.
+{
+  console.log('directives: one topic, one live line');
+  const db = new DatabaseSync(join(dir, 'directives.db'));
+  ensureSchema(db);
+
+  addDirective(db, { topic: 'address', text: '叫我老大' });
+  const again = addDirective(db, { topic: 'address', text: '叫我老大' });
+  check(liveDirectives(db).length === 1, `saying it twice leaves one live row (${liveDirectives(db).length})`);
+  check(again.superseded.length === 0, 'and reports nothing as replaced');
+
+  addDirective(db, { topic: 'address', text: '叫我工兵' });
+  const live = liveDirectives(db);
+  check(live.length === 1, `a correction replaces rather than adds (${live.length})`);
+  check(String(live[0].text) === '叫我工兵', 'and the newest wording is the one in force');
+  check(db.prepare('SELECT COUNT(*) n FROM directives').get().n === 2, 'while the old wording is kept, not deleted');
+
+  // Withdrawal is the missing verb. Without it the agent could record an instruction
+  // and never take one back -- and the complaint it actually made was "I can't even
+  // delete cleanly", about a memory system it is meant to be running.
+  const withdrawn = retireDirective(db, 'address');
+  check(withdrawn.retired === 1, `retiring a topic withdraws its live row (${withdrawn.retired})`);
+  check(liveDirectives(db).length === 0, 'and nothing is left in force');
+  check(db.prepare('SELECT COUNT(*) n FROM directives').get().n === 2, 'but the record of it survives');
+
+  const nothing = retireDirective(db, 'address');
+  check(nothing.retired === 0, 'retiring it again reports nothing to do');
+
+  // The rendered block follows the same rule: one line per topic.
+  addDirective(db, { topic: 'length', text: '每次只回一行' });
+  addDirective(db, { topic: 'length', text: '每次只回一行' });
+  const block = renderResident(db, { userId: OWNER, language: 'zh' });
+  const occurrences = block.split('\n').filter((line) => line.includes('每次只回一行')).length;
+  check(occurrences === 1, `the block shows it once (${occurrences})`);
   db.close();
 }
 
